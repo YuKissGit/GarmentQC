@@ -8,6 +8,13 @@ use umya_spreadsheet::structs::drawing::spreadsheet::{
 use umya_spreadsheet::structs::Image;
 use umya_spreadsheet::{reader, writer};
 
+const PHOTO_COLUMN_WIDTH: f64 = 50.0;
+const PHOTO_ROW_HEIGHT_POINTS: f64 = 400.0;
+const PHOTO_CELL_WIDTH_PX: f64 = 355.0;
+const PHOTO_CELL_HEIGHT_PX: f64 = PHOTO_ROW_HEIGHT_POINTS * 4.0 / 3.0;
+const PHOTO_PADDING_PX: f64 = 3.0;
+const EMU_PER_PIXEL: f64 = 9525.0;
+
 pub fn export_batch(
     db: &Database,
     batch_id: i64,
@@ -83,6 +90,19 @@ mod tests {
             photos: Vec::new(),
         })
         .unwrap();
+        db.create_record(RecordInput {
+            batch_id,
+            carton_id,
+            barcode: "SKU-A-WITH-PHOTO".into(),
+            grade: "A".into(),
+            quantity: 1,
+            exception_reason: "A级备注".into(),
+            photos: vec![PhotoInput {
+                name: "a-photo.png".into(),
+                data_base64: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=".into(),
+            }],
+        })
+        .unwrap();
         let resource_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .unwrap()
@@ -95,14 +115,14 @@ mod tests {
         assert!(sheet.get_merge_cells().iter().any(|range| range.get_range() == "A1:G1"));
         assert_eq!(sheet.get_value("G3"), "备注内容");
         assert_eq!(sheet.get_value("H3"), "");
-        assert_eq!(sheet.get_value("A20"), "小计Total");
-        assert_eq!(*sheet.get_row_dimension(&19).unwrap().get_height(), 24.0);
-        assert_eq!(*sheet.get_row_dimension(&20).unwrap().get_height(), 63.0);
+        assert_eq!(sheet.get_value("A21"), "小计Total");
+        assert_eq!(*sheet.get_row_dimension(&20).unwrap().get_height(), 24.0);
+        assert_eq!(*sheet.get_row_dimension(&21).unwrap().get_height(), 63.0);
         let report = reader::xlsx::read(Path::new(&files[1])).unwrap();
         assert_eq!(report.get_sheet_count(), 5);
         assert!(report.get_sheet_by_name("质检报告").is_none());
         let photos = report.get_sheet_by_name("瑕疵照片 Sample").unwrap();
-        assert_eq!(*photos.get_row_dimension(&2).unwrap().get_height(), 60.0);
+        assert_eq!(*photos.get_row_dimension(&2).unwrap().get_height(), 400.0);
         assert_eq!(photos.get_value("A2"), "备注内容");
         assert_eq!(photos.get_value("B2"), "B");
         assert_eq!(photos.get_value("C2"), "17");
@@ -110,6 +130,8 @@ mod tests {
         assert_eq!(photos.get_value("E2"), "SKU-001");
         assert_eq!(photos.get_value("F2"), "N/A");
         assert_eq!(photos.get_value("B52"), "D");
+        assert_eq!(photos.get_value("B53"), "A");
+        assert_eq!(photos.get_value("E53"), "SKU-A-WITH-PHOTO");
         assert_eq!(
             photos.get_cell("A52").unwrap().get_style(),
             photos.get_cell("A2").unwrap().get_style()
@@ -129,6 +151,15 @@ mod tests {
         for column in ["G", "H", "I"] {
             assert_eq!(*photos.get_column_dimension(column).unwrap().get_width(), 50.0);
         }
+        assert_eq!(photos.get_image_collection().len(), 2);
+        let image = &photos.get_image_collection()[0];
+        let anchor = image.get_two_cell_anchor().unwrap();
+        assert_eq!(anchor.get_from_marker().get_coordinate(), "G2");
+        assert_eq!(anchor.get_to_marker().get_coordinate(), "G2");
+        assert!(*anchor.get_from_marker().get_col_off() > 0);
+        assert!(*anchor.get_from_marker().get_row_off() > 0);
+        assert!(*anchor.get_to_marker().get_col_off() < (PHOTO_CELL_WIDTH_PX * EMU_PER_PIXEL) as i32);
+        assert!(*anchor.get_to_marker().get_row_off() < (PHOTO_CELL_HEIGHT_PX * EMU_PER_PIXEL) as i32);
     }
 }
 
@@ -336,9 +367,14 @@ fn export_report(db: &Database, batch_id: i64, template: &Path, out: &Path) -> R
         }
         let mut emitted = 0usize;
         for col in ["G", "H", "I"] {
-            s.get_column_dimension_mut(col).set_width(50.0);
+            s.get_column_dimension_mut(col).set_width(PHOTO_COLUMN_WIDTH);
         }
-        for source in records.iter().filter(|record| record.grade != "A") {
+        for source in &records {
+            let photos = db.photos_for_record(source.id)?;
+            // A 级没有图片时仍不进入瑕疵照片表；如果用户主动上传了图片，则必须导出。
+            if source.grade == "A" && photos.is_empty() {
+                continue;
+            }
             let seal_sequence = if source.quantity > 1 || source.grade == "D" {
                 "N/A".to_string()
             } else {
@@ -353,11 +389,11 @@ fn export_report(db: &Database, batch_id: i64, template: &Path, out: &Path) -> R
                     .sum();
                 (previous + 1).to_string()
             };
-            let copies = if source.grade == "B" { 1 } else { source.quantity };
+            let copies = if matches!(source.grade.as_str(), "A" | "B") { 1 } else { source.quantity };
             for _ in 0..copies {
                 emitted += 1;
                 let row = emitted + 1;
-                s.get_row_dimension_mut(&(row as u32)).set_height(60.0);
+                s.get_row_dimension_mut(&(row as u32)).set_height(PHOTO_ROW_HEIGHT_POINTS);
                 for (index, column) in
                     ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J']
                         .iter()
@@ -368,7 +404,7 @@ fn export_report(db: &Database, batch_id: i64, template: &Path, out: &Path) -> R
                 }
                 s.get_cell_mut(format!("A{row}")).set_value(&source.exception_reason);
                 s.get_cell_mut(format!("B{row}")).set_value(&source.grade);
-                s.get_cell_mut(format!("C{row}")).set_value_number(if source.grade == "B" { source.quantity as f64 } else { 1.0 });
+                s.get_cell_mut(format!("C{row}")).set_value_number(if matches!(source.grade.as_str(), "A" | "B") { source.quantity as f64 } else { 1.0 });
                 s.get_cell_mut(format!("D{row}"))
                     .set_value_string(&source.carton_no)
                     .get_style_mut()
@@ -382,30 +418,9 @@ fn export_report(db: &Database, batch_id: i64, template: &Path, out: &Path) -> R
                 s.get_cell_mut(format!("F{row}"))
                     .set_value(&seal_sequence);
                 s.get_cell_mut(format!("J{row}")).set_value_number(source.id as f64);
-                let photos = db.photos_for_record(source.id)?;
-                for photo in photos {
+                for photo in &photos {
                     let col = match photo.photo_order { 1 => 'G', 2 => 'H', _ => 'I' };
-                    let mut from_marker = MarkerType::default();
-                    from_marker.set_coordinate(format!("{col}{row}"));
-                    let mut image = Image::default();
-                    image.new_image(&photo.file_path, from_marker.clone());
-                    let picture = image
-                        .get_one_cell_anchor()
-                        .and_then(|anchor| anchor.get_picture())
-                        .cloned()
-                        .context("Unable to create an in-cell image")?;
-                    let mut to_marker = MarkerType::default();
-                    let next_col =
-                        char::from_u32(col as u32 + 1).context("Invalid image column")?;
-                    to_marker.set_coordinate(format!("{next_col}{}", row + 1));
-                    let mut anchor = TwoCellAnchor::default();
-                    anchor
-                        .set_edit_as(EditAsValues::TwoCell)
-                        .set_from_marker(from_marker)
-                        .set_to_marker(to_marker)
-                        .set_picture(picture);
-                    image.remove_one_cell_anchor().set_two_cell_anchor(anchor);
-                    s.add_image(image);
+                    add_cell_fitted_image(s, &photo.file_path, col, row)?;
                 }
             }
         }
@@ -417,5 +432,53 @@ fn export_report(db: &Database, batch_id: i64, template: &Path, out: &Path) -> R
         sheet.get_defined_names_mut().clear();
     }
     writer::xlsx::write(&book, out)?;
+    Ok(())
+}
+
+fn add_cell_fitted_image(
+    sheet: &mut umya_spreadsheet::Worksheet,
+    path: &str,
+    column: char,
+    row: usize,
+) -> Result<()> {
+    let source = imagesize::size(path)
+        .with_context(|| format!("无法读取图片尺寸：{path}"))?;
+    let available_width = PHOTO_CELL_WIDTH_PX - PHOTO_PADDING_PX * 2.0;
+    let available_height = PHOTO_CELL_HEIGHT_PX - PHOTO_PADDING_PX * 2.0;
+    let scale = (available_width / source.width as f64)
+        .min(available_height / source.height as f64);
+    let width = source.width as f64 * scale;
+    let height = source.height as f64 * scale;
+    let left = (PHOTO_CELL_WIDTH_PX - width) / 2.0;
+    let top = (PHOTO_CELL_HEIGHT_PX - height) / 2.0;
+
+    let mut from_marker = MarkerType::default();
+    from_marker.set_coordinate(format!("{column}{row}"));
+    from_marker
+        .set_col_off((left * EMU_PER_PIXEL).round() as i32)
+        .set_row_off((top * EMU_PER_PIXEL).round() as i32);
+
+    let mut image = Image::default();
+    image.new_image(path, from_marker.clone());
+    let picture = image
+        .get_one_cell_anchor()
+        .and_then(|anchor| anchor.get_picture())
+        .cloned()
+        .context("无法创建 Excel 图片对象")?;
+
+    let mut to_marker = MarkerType::default();
+    to_marker.set_coordinate(format!("{column}{row}"));
+    to_marker
+        .set_col_off(((left + width) * EMU_PER_PIXEL).round() as i32)
+        .set_row_off(((top + height) * EMU_PER_PIXEL).round() as i32);
+
+    let mut anchor = TwoCellAnchor::default();
+    anchor
+        .set_edit_as(EditAsValues::TwoCell)
+        .set_from_marker(from_marker)
+        .set_to_marker(to_marker)
+        .set_picture(picture);
+    image.remove_one_cell_anchor().set_two_cell_anchor(anchor);
+    sheet.add_image(image);
     Ok(())
 }

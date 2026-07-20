@@ -1,6 +1,6 @@
 [package]
 name = "clothes-qa"
-version = "0.1.1"
+version = "0.1.2"
 description = "Offline clothing quality inspection system"
 authors = ["Clothes QA"]
 edition = "2021"
@@ -21,3 +21,4 @@ uuid = { version = "1", features = ["v4"] }
 base64 = "0.22"
 anyhow = "1"
 umya-spreadsheet = "2.3"
+imagesize = "0.14"
