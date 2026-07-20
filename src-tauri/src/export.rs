@@ -15,8 +15,8 @@ pub fn export_batch(
     resource_dir: PathBuf,
 ) -> Result<Vec<String>> {
     fs::create_dir_all(&output_dir)?;
-    let seal_template = find_template(&resource_dir, "t.xlsx")?;
-    let report_template = find_template(&resource_dir, "入库质检报告 0715.xlsx")?;
+    let seal_template = find_template(&resource_dir, "template-2.xlsx")?;
+    let report_template = find_template(&resource_dir, "template-1.xlsx")?;
     let (batch_no, date): (String, String) = db.connection().query_row(
         "SELECT batch_no,inspection_date FROM batches WHERE id=?",
         [batch_id],
@@ -73,6 +73,16 @@ mod tests {
                 data_base64: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=".into(),
             }],
         }).unwrap();
+        db.create_record(RecordInput {
+            batch_id,
+            carton_id,
+            barcode: "SKU-D".into(),
+            grade: "D".into(),
+            quantity: 50,
+            exception_reason: "Cannot repair".into(),
+            photos: Vec::new(),
+        })
+        .unwrap();
         let resource_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .unwrap()
@@ -99,12 +109,23 @@ mod tests {
         assert_eq!(photos.get_value("D2"), "001");
         assert_eq!(photos.get_value("E2"), "SKU-001");
         assert_eq!(photos.get_value("F2"), "N/A");
+        assert_eq!(photos.get_value("B52"), "D");
+        assert_eq!(
+            photos.get_cell("A52").unwrap().get_style(),
+            photos.get_cell("A2").unwrap().get_style()
+        );
         let grade_b = report.get_sheet_by_name("B 可增值").unwrap();
         assert_eq!(grade_b.get_value("A2"), "");
         assert_eq!(grade_b.get_value("B2"), "001");
         assert_eq!(grade_b.get_value("C2"), "SKU-001");
         assert_eq!(grade_b.get_value("F2"), "备注内容");
         assert_eq!(grade_b.get_value("C18"), "SKU-001");
+        let grade_d = report.get_sheet_by_name("D 不可修復").unwrap();
+        assert_eq!(grade_d.get_value("C51"), "SKU-D");
+        assert_eq!(
+            grade_d.get_cell("B51").unwrap().get_style(),
+            grade_d.get_cell("B2").unwrap().get_style()
+        );
         for column in ["G", "H", "I"] {
             assert_eq!(*photos.get_column_dimension(column).unwrap().get_width(), 50.0);
         }
@@ -257,6 +278,14 @@ fn export_report(db: &Database, batch_id: i64, template: &Path, out: &Path) -> R
     ] {
         if let Some(s) = book.get_sheet_by_name_mut(name) {
             s.remove_column("H", &2);
+            let body_styles = ['A', 'B', 'C', 'D', 'E', 'F']
+                .iter()
+                .map(|column| {
+                    s.get_cell(format!("{column}2"))
+                        .map(|cell| cell.get_style().clone())
+                        .unwrap_or_default()
+                })
+                .collect::<Vec<_>>();
             let last_template_row = s.get_highest_row().max(2);
             for row in 2..=last_template_row {
                 for col in ['A', 'B', 'C', 'D', 'E', 'F'] {
@@ -268,6 +297,10 @@ fn export_report(db: &Database, batch_id: i64, template: &Path, out: &Path) -> R
                 for _ in 0..r.quantity {
                     emitted += 1;
                     let row = emitted + 1;
+                    for (index, column) in ['A', 'B', 'C', 'D', 'E', 'F'].iter().enumerate() {
+                        s.get_cell_mut(format!("{column}{row}"))
+                            .set_style(body_styles[index].clone());
+                    }
                     s.get_cell_mut(format!("A{row}")).set_value("");
                     s.get_cell_mut(format!("B{row}"))
                         .set_value_string(&r.carton_no)
@@ -287,6 +320,14 @@ fn export_report(db: &Database, batch_id: i64, template: &Path, out: &Path) -> R
         }
     }
     if let Some(s) = book.get_sheet_by_name_mut("瑕疵照片 Sample") {
+        let body_styles = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J']
+            .iter()
+            .map(|column| {
+                s.get_cell(format!("{column}2"))
+                    .map(|cell| cell.get_style().clone())
+                    .unwrap_or_default()
+            })
+            .collect::<Vec<_>>();
         let last_template_row = s.get_highest_row().max(2);
         for row in 2..=last_template_row {
             for col in ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J'] {
@@ -317,6 +358,14 @@ fn export_report(db: &Database, batch_id: i64, template: &Path, out: &Path) -> R
                 emitted += 1;
                 let row = emitted + 1;
                 s.get_row_dimension_mut(&(row as u32)).set_height(60.0);
+                for (index, column) in
+                    ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J']
+                        .iter()
+                        .enumerate()
+                {
+                    s.get_cell_mut(format!("{column}{row}"))
+                        .set_style(body_styles[index].clone());
+                }
                 s.get_cell_mut(format!("A{row}")).set_value(&source.exception_reason);
                 s.get_cell_mut(format!("B{row}")).set_value(&source.grade);
                 s.get_cell_mut(format!("C{row}")).set_value_number(if source.grade == "B" { source.quantity as f64 } else { 1.0 });

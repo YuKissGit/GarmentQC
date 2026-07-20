@@ -16,7 +16,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "resources": ["../t.xlsx", "../入库质检报告 0715.xlsx"],
+    "resources": ["../template-1.xlsx", "../template-2.xlsx"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
