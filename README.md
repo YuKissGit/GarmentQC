@@ -1,30 +1,35 @@
-# 服装质检系统
+# Clothing Quality Inspection
 
-Windows 与 macOS 均可使用的完全离线桌面应用。程序不联网、不部署；批次、箱号、UPC 和质检记录保存在本机 SQLite，异常图片保存在本机应用数据目录。
+A fully offline desktop application for Windows and macOS. It requires no network connection or server deployment. Batches, cartons, UPCs, and inspection records are stored in a local SQLite database. Exception images are stored in the application's local data directory.
 
-## 当前业务规则
+## Business Rules
 
-- 一个批次包含多个箱号，一个箱号可以包含多个 UPC。
-- 从 `p.xlsx` 格式的 `.xlsx` 文件导入箱号、UPC 和参考数量；左侧箱号每页最多显示 70 个。
-- A/B/C/D 均可新增多行。每行填写商品条码、数量、异常原因和最多 3 张 JPG/PNG 图片。
-- 所有等级的数量默认 1，均可修改；每一填写行是一条独立质检记录。
-- D 级自动从封箱数量中排除，封箱数量为 A+B+C。
-- 本箱有记录后才能完成；完成后可重新开放。修改本箱时整箱数据一次性保存，失败不会留下半套修改。
-- 批次报表显示各等级数量、占比，以及每个箱号的参考数量与实际数量差异。
-- 删除批次需要两次不同形式的确认，并删除该批次的箱号、记录和本地图片。
+- A batch can contain multiple cartons, and a carton can contain multiple UPCs.
+- Carton numbers, UPCs, and reference quantities can be imported from an `.xlsx` file using the `p.xlsx` format.
+- The carton sidebar displays up to 70 cartons per page.
+- Multiple rows can be added under grades A, B, C, and D.
+- Each row contains a product barcode, quantity, optional exception reason, and up to three JPG or PNG images.
+- The default quantity is 1 for every grade and can be changed.
+- Each entry row is stored as an independent inspection record.
+- Grade D items are automatically excluded from the packed quantity. Packed quantity equals A + B + C.
+- A carton can only be completed after at least one inspection record has been entered.
+- Completed cartons can be reopened for editing.
+- Carton edits are saved as a single transaction, preventing partially saved changes.
+- The batch report shows quantities and percentages for each grade, together with reference-versus-actual differences for every carton.
+- Deleting a batch requires two different confirmations and removes its cartons, inspection records, and locally stored images.
 
-## Excel 导出
+## Excel Export
 
-程序一次导出：
+Each export produces two workbooks:
 
-- `封箱单 批次号 日期.xlsx`：以 `template-2.xlsx` 为模板，每个箱号一张工作表；箱号超过模板工作表数量时自动复制工作表，不设 42 箱限制。只写入 A/B/C，逐件展开，D 不进入封箱单。
-- `入库质检报告 批次号 日期.xlsx`：以 `template-1.xlsx` 为模板，仅保留 A/B/C/D 等级表和 `瑕疵照片 Sample`。
+- `封箱单 BatchNumber Date.xlsx`: generated from `template-2.xlsx`. Each carton receives its own worksheet. Additional worksheets are created automatically when the carton count exceeds the number of worksheets in the template. There is no 42-carton limit. Only grades A, B, and C are included, with quantities expanded to one item per row. Grade D is excluded.
+- `入库质检报告 BatchNumber Date.xlsx`: generated from `template-1.xlsx`. It retains the A/B/C/D grade worksheets and the `瑕疵照片 Sample` worksheet.
 
-等级表逐件展开。瑕疵照片表中 B 级每条记录占一行并保留录入数量，C/D 按数量逐件展开。G/H/I 列宽为 50，数据行高为 60；图片使用随单元格移动和缩放的双单元格锚点，最多 3 张。
+Grade worksheets expand every quantity to one item per row. In the exception-image worksheet, each grade B record occupies one row and retains its entered quantity, while grades C and D are expanded to one item per row. Columns G, H, and I have a width of 50, and data rows have a height of 60. Up to three images are anchored to move and resize with their cells.
 
-## 本地开发
+## Local Development
 
-需要 Node.js、Rust stable 和 Tauri 2 对应的系统构建依赖。
+Node.js, Rust stable, and the platform-specific Tauri 2 build dependencies are required.
 
 ```bash
 npm install
@@ -32,21 +37,21 @@ rustup default stable
 npm run tauri dev
 ```
 
-检查前端与后端：
+Run the frontend build and backend tests:
 
 ```bash
 npm run build
 cargo test --manifest-path src-tauri/Cargo.toml --lib
 ```
 
-构建安装包：
+Build an installer:
 
 ```bash
 npm run tauri build
 ```
 
-Windows 安装包需要在 Windows 构建，macOS 安装包需要在 macOS 构建。图片仅支持 JPG/JPEG/PNG。
+Windows installers must be built on Windows, and macOS packages must be built on macOS. Images are limited to JPG, JPEG, and PNG.
 
-## 数据说明
+## Local Data
 
-当前版本使用全新的 `quality_v2.db` 和 `photos_v2`，不读取、不迁移旧版本数据。旧数据库文件不会被程序自动删除。
+The current version uses the new `quality_v2.db` database and `photos_v2` image directory. It does not read or migrate data from earlier versions. Existing legacy database files are not automatically deleted.
