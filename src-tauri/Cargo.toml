@@ -1,7 +1,7 @@
 [package]
 name = "clothes-qa"
 version = "0.1.0"
-description = "离线服装质检系统"
+description = "Offline clothing quality inspection system"
 authors = ["Clothes QA"]
 edition = "2021"
 
