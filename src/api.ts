@@ -18,6 +18,9 @@ export const api = {
     invoke<CartonProduct[]>("list_carton_products", { cartonId }),
   createCarton: (batchId: number, cartonNo: string) =>
     invoke<number>("create_carton", { batchId, cartonNo }),
+  renameCarton: (id: number, cartonNo: string) =>
+    invoke<void>("rename_carton", { id, cartonNo }),
+  deleteCarton: (id: number) => invoke<void>("delete_carton", { id }),
   importCartons: (batchId: number, path: string) =>
     invoke<ImportResult>("import_cartons", { batchId, path }),
   exportCartonTemplate: (path: string) =>

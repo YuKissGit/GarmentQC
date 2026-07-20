@@ -44,6 +44,14 @@ fn create_carton(
     result(db.lock().unwrap().create_carton(batch_id, carton_no))
 }
 #[tauri::command]
+fn rename_carton(db: State<AppDb>, id: i64, carton_no: String) -> Result<(), String> {
+    result(db.lock().unwrap().rename_carton(id, carton_no))
+}
+#[tauri::command]
+fn delete_carton(db: State<AppDb>, id: i64) -> Result<(), String> {
+    result(db.lock().unwrap().delete_carton(id))
+}
+#[tauri::command]
 fn list_records(
     db: State<AppDb>,
     batch_id: i64,
@@ -309,6 +317,8 @@ pub fn run() {
             list_cartons,
             list_carton_products,
             create_carton,
+            rename_carton,
+            delete_carton,
             list_records,
             create_record,
             replace_carton_records,

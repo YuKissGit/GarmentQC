@@ -1,0 +1,13 @@
+.context-menu { position: fixed; z-index: 40; display: flex; flex-direction: column; min-width: 130px; padding: 5px; background: #fff; border: 1px solid #d5ddd7; border-radius: 9px; box-shadow: 0 8px 28px #0003; }
+.context-menu button { border: 0; text-align: left; padding: 8px 12px; }
+.context-menu button:hover { background: #f0f5f1; }
+.carton-action-dialog { width: min(430px, 92vw); }
+.carton-action-dialog label { display: flex; flex-direction: column; gap: 7px; }
+.carton-action-dialog input { height: 40px; border: 1px solid #cbd4ce; border-radius: 7px; padding: 0 10px; }
+.photo-zone { position: relative; min-height: 64px; overflow: visible; }
+.photo-zone:focus { outline: 2px solid #4d9772; outline-offset: 1px; }
+.photo-preview { position: relative !important; display: inline-block !important; width: 54px; height: 54px; }
+.photo-preview img { display: block; width: 54px; height: 54px; object-fit: cover; border-radius: 6px; border: 1px solid #d2dbd5; }
+.photo-preview button { position: absolute; right: -4px; top: -5px; width: 18px; height: 18px; padding: 0; border: 0; border-radius: 50%; background: #a53c35; color: #fff; line-height: 18px; }
+.photo-context-menu { position: absolute !important; z-index: 45; left: 10px; top: 40px; padding: 4px !important; background: #fff; border: 1px solid #d5ddd7; border-radius: 7px; box-shadow: 0 5px 18px #0003; }
+.photo-context-menu button { font-size: 13px; padding: 7px 12px; }

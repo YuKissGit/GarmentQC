@@ -116,6 +116,38 @@ impl Database {
         Ok(self.conn.last_insert_rowid())
     }
 
+    pub fn rename_carton(&mut self, id: i64, carton_no: String) -> Result<()> {
+        if carton_no.trim().is_empty() {
+            bail!("箱号不能为空")
+        }
+        let changed = self.conn.execute(
+            "UPDATE cartons SET carton_no=? WHERE id=?",
+            params![carton_no.trim(), id],
+        )?;
+        if changed == 0 {
+            bail!("未找到该箱")
+        }
+        Ok(())
+    }
+
+    pub fn delete_carton(&mut self, id: i64) -> Result<()> {
+        let mut statement = self.conn.prepare(
+            "SELECT p.file_path FROM photos p
+             JOIN inspection_records r ON r.id=p.record_id
+             WHERE r.carton_id=?",
+        )?;
+        let photo_paths = statement
+            .query_map([id], |row| row.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        drop(statement);
+        let deleted = self.conn.execute("DELETE FROM cartons WHERE id=?", [id])?;
+        if deleted == 0 {
+            bail!("未找到该箱")
+        }
+        remove_photo_files(photo_paths);
+        Ok(())
+    }
+
     pub fn list_cartons(&self, batch_id: i64) -> Result<Vec<Carton>> {
         let mut statement = self.conn.prepare(
             "SELECT c.id,c.carton_no,c.reference_qty,
