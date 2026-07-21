@@ -6,14 +6,17 @@ import type {
   ImportResult,
   RecordInput,
   RecordRow,
-  ReplaceCartonRecordsInput
+  ReplaceCartonRecordsInput,
 } from "./types";
+import type { PhotoInput } from "./types";
 
 export const api = {
   listBatches: () => invoke<Batch[]>("list_batches"),
-  createBatch: (input: Omit<Batch, "id">) => invoke<number>("create_batch", { input }),
+  createBatch: (input: Omit<Batch, "id">) =>
+    invoke<number>("create_batch", { input }),
   deleteBatch: (id: number) => invoke<void>("delete_batch", { id }),
-  listCartons: (batchId: number) => invoke<Carton[]>("list_cartons", { batchId }),
+  listCartons: (batchId: number) =>
+    invoke<Carton[]>("list_cartons", { batchId }),
   listCartonProducts: (cartonId: number) =>
     invoke<CartonProduct[]>("list_carton_products", { cartonId }),
   createCarton: (batchId: number, cartonNo: string) =>
@@ -27,11 +30,14 @@ export const api = {
     invoke<string>("export_carton_template", { path }),
   listRecords: (batchId: number, cartonId: number) =>
     invoke<RecordRow[]>("list_records", { batchId, cartonId }),
-  createRecord: (input: RecordInput) => invoke<number>("create_record", { input }),
+  createRecord: (input: RecordInput) =>
+    invoke<number>("create_record", { input }),
   replaceCartonRecords: (input: ReplaceCartonRecordsInput) =>
     invoke<void>("replace_carton_records", { input }),
   completeCarton: (id: number) => invoke<void>("complete_carton", { id }),
   reopenCarton: (id: number) => invoke<void>("reopen_carton", { id }),
+  readClipboardFileImage: () =>
+    invoke<PhotoInput | null>("read_clipboard_file_image"),
   exportBatch: (batchId: number, outputDir: string) =>
-    invoke<string[]>("export_batch", { batchId, outputDir })
+    invoke<string[]>("export_batch", { batchId, outputDir }),
 };

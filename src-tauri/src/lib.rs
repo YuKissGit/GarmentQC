@@ -79,6 +79,43 @@ fn reopen_carton(db: State<AppDb>, id: i64) -> Result<(), String> {
     result(db.lock().unwrap().reopen_carton(id))
 }
 #[tauri::command]
+fn read_clipboard_file_image() -> Result<Option<PhotoInput>, String> {
+    result((|| {
+        let mut clipboard = arboard::Clipboard::new()?;
+        let paths = match clipboard.get().file_list() {
+            Ok(paths) => paths,
+            Err(_) => return Ok(None),
+        };
+        for path in paths {
+            let extension = path
+                .extension()
+                .and_then(|value| value.to_str())
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            if !matches!(extension.as_str(), "jpg" | "jpeg" | "png") {
+                continue;
+            }
+            let bytes = std::fs::read(&path)
+                .with_context(|| format!("无法读取剪贴板图片文件：{}", path.display()))?;
+            imagesize::blob_size(&bytes)
+                .with_context(|| format!("剪贴板文件不是有效图片：{}", path.display()))?;
+            let name = path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or("clipboard-image.png")
+                .to_string();
+            return Ok(Some(PhotoInput {
+                name,
+                data_base64: base64::Engine::encode(
+                    &base64::engine::general_purpose::STANDARD,
+                    bytes,
+                ),
+            }));
+        }
+        Ok(None)
+    })())
+}
+#[tauri::command]
 fn import_cartons(db: State<AppDb>, batch_id: i64, path: String) -> Result<ImportResult, String> {
     result((|| {
         let rows = read_carton_import(std::path::Path::new(&path))?;
@@ -301,6 +338,7 @@ mod template_tests {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
@@ -324,6 +362,7 @@ pub fn run() {
             replace_carton_records,
             complete_carton,
             reopen_carton,
+            read_clipboard_file_image,
             import_cartons,
             export_carton_template,
             export_batch

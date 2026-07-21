@@ -1,6 +1,6 @@
 [package]
 name = "clothes-qa"
-version = "0.1.2"
+version = "0.1.3"
 description = "Offline clothing quality inspection system"
 authors = ["Clothes QA"]
 edition = "2021"
@@ -22,3 +22,5 @@ base64 = "0.22"
 anyhow = "1"
 umya-spreadsheet = "2.3"
 imagesize = "0.14"
+tauri-plugin-clipboard-manager = "2"
+arboard = "3.6"

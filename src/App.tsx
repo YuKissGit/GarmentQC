@@ -1,12 +1,21 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { api } from "./api";
 import { open, save } from "@tauri-apps/plugin-dialog";
-import type { Batch, Carton, CartonProduct, Grade, PhotoInput, RecordRow } from "./types";
+import { readImage } from "@tauri-apps/plugin-clipboard-manager";
+import type {
+  Batch,
+  Carton,
+  CartonProduct,
+  Grade,
+  PhotoInput,
+  RecordRow,
+} from "./types";
 import "./features.css";
 
 const emptyBatch = {
   batchNo: `QA-${new Date().toISOString().slice(0, 10).replaceAll("-", "")}`,
-  inspectionDate: new Date().toISOString().slice(0, 10)
+  inspectionDate: new Date().toISOString().slice(0, 10),
 };
 
 function App() {
@@ -21,20 +30,37 @@ function App() {
   const [showBatch, setShowBatch] = useState(false);
   const [showReport, setShowReport] = useState(false);
   const [deleteMode, setDeleteMode] = useState(false);
-  const [deleteTarget, setDeleteTarget] = useState<Batch|null>(null);
-  const [cartonMenu, setCartonMenu] = useState<{carton:Carton;x:number;y:number}|null>(null);
-  const [cartonAction, setCartonAction] = useState<{carton:Carton;type:'rename'|'delete'}|null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Batch | null>(null);
+  const [cartonMenu, setCartonMenu] = useState<{
+    carton: Carton;
+    x: number;
+    y: number;
+  } | null>(null);
+  const [cartonAction, setCartonAction] = useState<{
+    carton: Carton;
+    type: "rename" | "delete";
+  } | null>(null);
   const [cartonPage, setCartonPage] = useState(1);
   const cartonPageSize = 70;
-  const cartonPageCount = Math.max(1, Math.ceil(cartons.length / cartonPageSize));
-  const visibleCartons = cartons.slice((cartonPage - 1) * cartonPageSize, cartonPage * cartonPageSize);
+  const cartonPageCount = Math.max(
+    1,
+    Math.ceil(cartons.length / cartonPageSize),
+  );
+  const visibleCartons = cartons.slice(
+    (cartonPage - 1) * cartonPageSize,
+    cartonPage * cartonPageSize,
+  );
 
   const showError = (e: unknown) => setMessage(String(e));
   const refreshBatches = async () => setBatches(await api.listBatches());
   const refreshBatch = async (selected = batch) => {
     if (!selected) return;
-    const cs = await api.listCartons(selected.id); setCartons(cs);
-    const current = carton ? cs.find(c => c.id === carton.id) ?? null : null; setCarton(current);
+    const cs = await api.listCartons(selected.id);
+    setCartons(cs);
+    const current = carton
+      ? (cs.find((c) => c.id === carton.id) ?? null)
+      : null;
+    setCarton(current);
     if (!current) {
       setRecords([]);
       setProducts([]);
@@ -42,76 +68,1375 @@ function App() {
     }
     const [nextRecords, nextProducts] = await Promise.all([
       api.listRecords(selected.id, current.id),
-      api.listCartonProducts(current.id)
+      api.listCartonProducts(current.id),
     ]);
     setRecords(nextRecords);
     setProducts(nextProducts);
   };
-  useEffect(() => { refreshBatches().catch(showError).finally(() => setLoading(false)); }, []);
-  useEffect(() => { if (batch) refreshBatch(batch).catch(showError); }, [batch?.id]);
-  useEffect(() => { setCartonPage(1); }, [batch?.id]);
-  useEffect(() => { if (cartonPage > cartonPageCount) setCartonPage(cartonPageCount); }, [cartonPage, cartonPageCount]);
-  useEffect(() => { const close=()=>setCartonMenu(null); window.addEventListener('click',close); return()=>window.removeEventListener('click',close); }, []);
+  useEffect(() => {
+    refreshBatches()
+      .catch(showError)
+      .finally(() => setLoading(false));
+  }, []);
+  useEffect(() => {
+    if (batch) refreshBatch(batch).catch(showError);
+  }, [batch?.id]);
+  useEffect(() => {
+    setCartonPage(1);
+  }, [batch?.id]);
+  useEffect(() => {
+    if (cartonPage > cartonPageCount) setCartonPage(cartonPageCount);
+  }, [cartonPage, cartonPageCount]);
+  useEffect(() => {
+    const close = () => setCartonMenu(null);
+    window.addEventListener("click", close);
+    return () => window.removeEventListener("click", close);
+  }, []);
 
-  if (!batch) return <div className="app"><header><div><h1>服装质检</h1><p>离线质检与 Excel 导出</p></div><div className="header-actions"><button className={deleteMode?'danger active-delete':''} onClick={()=>setDeleteMode(value=>!value)}>{deleteMode?'完成':'清空批次'}</button><button className="primary" onClick={() => setShowBatch(true)}>新建批次</button></div></header>
-    {message && <Notice text={message} close={() => setMessage("")} />}
-    <main className="batch-grid">{loading?<div className="empty">正在读取本地数据…</div>:<>{batches.map(b => <div className="batch-card-wrap" key={b.id}><button className="batch-card" onClick={() => {if(!deleteMode)setBatch(b)}}><strong>{b.batchNo}</strong><span>{b.inspectionDate}</span></button>{deleteMode&&<button className="batch-delete-x" title={`删除批次 ${b.batchNo}`} aria-label={`删除批次 ${b.batchNo}`} onClick={()=>setDeleteTarget(b)}>×</button>}</div>)}{!batches.length && <div className="empty">暂无质检批次，请先新建批次。</div>}</>}</main>
-    {showBatch && <BatchDialog close={() => setShowBatch(false)} save={async input => { await api.createBatch(input); setShowBatch(false); await refreshBatches(); }} />}
-    {deleteTarget&&<DeleteBatchDialog batch={deleteTarget} close={()=>setDeleteTarget(null)} remove={async()=>{await api.deleteBatch(deleteTarget.id);setDeleteTarget(null);await refreshBatches();setMessage(`批次 ${deleteTarget.batchNo} 已删除`);}}/>}
-  </div>;
+  if (!batch)
+    return (
+      <div className="app">
+        <header>
+          <div>
+            <h1>服装质检</h1>
+            <p>离线质检与 Excel 导出</p>
+          </div>
+          <div className="header-actions">
+            <button
+              className={deleteMode ? "danger active-delete" : ""}
+              onClick={() => setDeleteMode((value) => !value)}
+            >
+              {deleteMode ? "完成" : "清空批次"}
+            </button>
+            <button className="primary" onClick={() => setShowBatch(true)}>
+              新建批次
+            </button>
+          </div>
+        </header>
+        {message && <Notice text={message} close={() => setMessage("")} />}
+        <main className="batch-grid">
+          {loading ? (
+            <div className="empty">正在读取本地数据…</div>
+          ) : (
+            <>
+              {batches.map((b) => (
+                <div className="batch-card-wrap" key={b.id}>
+                  <button
+                    className="batch-card"
+                    onClick={() => {
+                      if (!deleteMode) setBatch(b);
+                    }}
+                  >
+                    <strong>{b.batchNo}</strong>
+                    <span>{b.inspectionDate}</span>
+                  </button>
+                  {deleteMode && (
+                    <button
+                      className="batch-delete-x"
+                      title={`删除批次 ${b.batchNo}`}
+                      aria-label={`删除批次 ${b.batchNo}`}
+                      onClick={() => setDeleteTarget(b)}
+                    >
+                      ×
+                    </button>
+                  )}
+                </div>
+              ))}
+              {!batches.length && (
+                <div className="empty">暂无质检批次，请先新建批次。</div>
+              )}
+            </>
+          )}
+        </main>
+        {showBatch && (
+          <BatchDialog
+            close={() => setShowBatch(false)}
+            save={async (input) => {
+              await api.createBatch(input);
+              setShowBatch(false);
+              await refreshBatches();
+            }}
+          />
+        )}
+        {deleteTarget && (
+          <DeleteBatchDialog
+            batch={deleteTarget}
+            close={() => setDeleteTarget(null)}
+            remove={async () => {
+              await api.deleteBatch(deleteTarget.id);
+              setDeleteTarget(null);
+              await refreshBatches();
+              setMessage(`批次 ${deleteTarget.batchNo} 已删除`);
+            }}
+          />
+        )}
+      </div>
+    );
 
-  return <div className="app"><header><div><button className="back" onClick={() => { setBatch(null); setCarton(null); setProducts([]); }}>← 批次列表</button><h1>{batch.batchNo}</h1><p>{batch.inspectionDate}</p></div><div className="header-actions"><button onClick={() => setShowReport(true)}>查看报表</button><button onClick={async()=>{const path=await save({defaultPath:'p.xlsx',filters:[{name:'Excel 文件',extensions:['xlsx']}],title:'保存 p.xlsx 导入模板'});if(!path)return;try{const savedPath=await api.exportCartonTemplate(path);setMessage(`模板已导出：${savedPath}`);}catch(e){showError(e);}}}>导出模板</button><button onClick={async()=>{const path=await open({multiple:false,filters:[{name:'p.xlsx 格式',extensions:['xlsx']}],title:'从 p.xlsx 导入箱号和 UPC 信息'});if(!path)return;try{const result=await api.importCartons(batch.id,path);await refreshBatch(batch);setMessage(`已导入 ${result.imported} 个箱号、${result.products} 个 UPC：新建 ${result.created} 个，更新 ${result.updated} 个`);}catch(e){showError(e);}}}>导入箱号</button><button onClick={() => exportData(batch.id).catch(showError)}>导出 Excel</button><button className="primary" onClick={() => (document.getElementById("new-carton") as HTMLDialogElement)?.showModal()}>添加箱号</button></div></header>
-    {message && <Notice text={message} close={() => setMessage("")} />}
-    <div className="workspace"><aside className="carton-sidebar"><h2>箱号</h2><div className="carton-grid">{visibleCartons.map(c => <button key={c.id} title={`箱号 ${c.cartonNo}${c.inspectedQty>0?` · 已录入 ${c.inspectedQty}`:' · 未录入'}${c.status==='completed'?' · 已完成':''}`} aria-label={`箱号 ${c.cartonNo}`} className={`carton-square ${c.inspectedQty>0?'has-records':'empty-carton'} ${carton?.id === c.id ? "active" : ""}`} onContextMenu={event=>{event.preventDefault();setCartonMenu({carton:c,x:event.clientX,y:event.clientY});}} onClick={async () => { setCarton(c); const [nextRecords,nextProducts]=await Promise.all([api.listRecords(batch.id,c.id),api.listCartonProducts(c.id)]);setRecords(nextRecords);setProducts(nextProducts); }}><span>{c.cartonNo}</span>{c.status==='completed'&&<i aria-hidden="true">✓</i>}</button>)}</div>{!cartons.length&&<p className="carton-empty">暂无箱号</p>}{cartonPageCount>1&&<nav className="carton-pagination" aria-label="箱号分页"><button disabled={cartonPage===1} onClick={()=>setCartonPage(page=>page-1)}>‹</button><span>{cartonPage} / {cartonPageCount}</span><button disabled={cartonPage===cartonPageCount} onClick={()=>setCartonPage(page=>page+1)}>›</button></nav>}</aside>
-      <main className="content">{carton ? <CartonView batch={batch} carton={carton} products={products} records={records} refresh={() => refreshBatch()} notify={setMessage} /> : <div className="empty">请从左侧选择箱号开始质检。</div>}</main></div>
-    <CartonDialog batchId={batch.id} saved={() => refreshBatch()} />
-    {showReport && <ReportDialog batch={batch} cartons={cartons} close={()=>setShowReport(false)}/>}
-    {cartonMenu&&<div className="context-menu" style={{left:cartonMenu.x,top:cartonMenu.y}} onClick={event=>event.stopPropagation()}><button onClick={()=>{setCartonAction({carton:cartonMenu.carton,type:'rename'});setCartonMenu(null)}}>修改箱号</button><button className="danger" onClick={()=>{setCartonAction({carton:cartonMenu.carton,type:'delete'});setCartonMenu(null)}}>删除该箱</button></div>}
-    {cartonAction&&<CartonActionDialog action={cartonAction} close={()=>setCartonAction(null)} save={async value=>{if(cartonAction.type==='rename'){await api.renameCarton(cartonAction.carton.id,value);setMessage(`箱号已修改为 ${value}`);}else{await api.deleteCarton(cartonAction.carton.id);if(carton?.id===cartonAction.carton.id){setCarton(null);setRecords([]);setProducts([]);}setMessage(`箱号 ${cartonAction.carton.cartonNo} 已删除`);}setCartonAction(null);await refreshBatch(batch);}}/>}
-  </div>;
+  return (
+    <div className="app">
+      <header>
+        <div>
+          <button
+            className="back"
+            onClick={() => {
+              setBatch(null);
+              setCarton(null);
+              setProducts([]);
+            }}
+          >
+            ← 批次列表
+          </button>
+          <h1>{batch.batchNo}</h1>
+          <p>{batch.inspectionDate}</p>
+        </div>
+        <div className="header-actions">
+          <button onClick={() => setShowReport(true)}>查看报表</button>
+          <button
+            onClick={async () => {
+              const path = await save({
+                defaultPath: "p.xlsx",
+                filters: [{ name: "Excel 文件", extensions: ["xlsx"] }],
+                title: "保存 p.xlsx 导入模板",
+              });
+              if (!path) return;
+              try {
+                const savedPath = await api.exportCartonTemplate(path);
+                setMessage(`模板已导出：${savedPath}`);
+              } catch (e) {
+                showError(e);
+              }
+            }}
+          >
+            导出模板
+          </button>
+          <button
+            onClick={async () => {
+              const path = await open({
+                multiple: false,
+                filters: [{ name: "p.xlsx 格式", extensions: ["xlsx"] }],
+                title: "从 p.xlsx 导入箱号和 UPC 信息",
+              });
+              if (!path) return;
+              try {
+                const result = await api.importCartons(batch.id, path);
+                await refreshBatch(batch);
+                setMessage(
+                  `已导入 ${result.imported} 个箱号、${result.products} 个 UPC：新建 ${result.created} 个，更新 ${result.updated} 个`,
+                );
+              } catch (e) {
+                showError(e);
+              }
+            }}
+          >
+            导入箱号
+          </button>
+          <button onClick={() => exportData(batch.id).catch(showError)}>
+            导出 Excel
+          </button>
+          <button
+            className="primary"
+            onClick={() =>
+              (
+                document.getElementById("new-carton") as HTMLDialogElement
+              )?.showModal()
+            }
+          >
+            添加箱号
+          </button>
+        </div>
+      </header>
+      {message && <Notice text={message} close={() => setMessage("")} />}
+      <div className="workspace">
+        <aside className="carton-sidebar">
+          <h2>箱号</h2>
+          <div className="carton-grid">
+            {visibleCartons.map((c) => (
+              <button
+                key={c.id}
+                title={`箱号 ${c.cartonNo}${c.inspectedQty > 0 ? ` · 已录入 ${c.inspectedQty}` : " · 未录入"}${c.status === "completed" ? " · 已完成" : ""}`}
+                aria-label={`箱号 ${c.cartonNo}`}
+                className={`carton-square ${c.inspectedQty > 0 ? "has-records" : "empty-carton"} ${carton?.id === c.id ? "active" : ""}`}
+                onContextMenu={(event) => {
+                  event.preventDefault();
+                  setCartonMenu({
+                    carton: c,
+                    x: event.clientX,
+                    y: event.clientY,
+                  });
+                }}
+                onClick={async () => {
+                  setCarton(c);
+                  const [nextRecords, nextProducts] = await Promise.all([
+                    api.listRecords(batch.id, c.id),
+                    api.listCartonProducts(c.id),
+                  ]);
+                  setRecords(nextRecords);
+                  setProducts(nextProducts);
+                }}
+              >
+                <span>{c.cartonNo}</span>
+                {c.status === "completed" && <i aria-hidden="true">✓</i>}
+              </button>
+            ))}
+          </div>
+          {!cartons.length && <p className="carton-empty">暂无箱号</p>}
+          {cartonPageCount > 1 && (
+            <nav className="carton-pagination" aria-label="箱号分页">
+              <button
+                disabled={cartonPage === 1}
+                onClick={() => setCartonPage((page) => page - 1)}
+              >
+                ‹
+              </button>
+              <span>
+                {cartonPage} / {cartonPageCount}
+              </span>
+              <button
+                disabled={cartonPage === cartonPageCount}
+                onClick={() => setCartonPage((page) => page + 1)}
+              >
+                ›
+              </button>
+            </nav>
+          )}
+        </aside>
+        <main className="content">
+          {carton ? (
+            <CartonView
+              batch={batch}
+              carton={carton}
+              products={products}
+              records={records}
+              refresh={() => refreshBatch()}
+              notify={setMessage}
+            />
+          ) : (
+            <div className="empty">请从左侧选择箱号开始质检。</div>
+          )}
+        </main>
+      </div>
+      <CartonDialog batchId={batch.id} saved={() => refreshBatch()} />
+      {showReport && (
+        <ReportDialog
+          batch={batch}
+          cartons={cartons}
+          close={() => setShowReport(false)}
+        />
+      )}
+      {cartonMenu && (
+        <div
+          className="context-menu"
+          style={{ left: cartonMenu.x, top: cartonMenu.y }}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <button
+            onClick={() => {
+              setCartonAction({ carton: cartonMenu.carton, type: "rename" });
+              setCartonMenu(null);
+            }}
+          >
+            修改箱号
+          </button>
+          <button
+            className="danger"
+            onClick={() => {
+              setCartonAction({ carton: cartonMenu.carton, type: "delete" });
+              setCartonMenu(null);
+            }}
+          >
+            删除该箱
+          </button>
+        </div>
+      )}
+      {cartonAction && (
+        <CartonActionDialog
+          action={cartonAction}
+          close={() => setCartonAction(null)}
+          save={async (value) => {
+            if (cartonAction.type === "rename") {
+              await api.renameCarton(cartonAction.carton.id, value);
+              setMessage(`箱号已修改为 ${value}`);
+            } else {
+              await api.deleteCarton(cartonAction.carton.id);
+              if (carton?.id === cartonAction.carton.id) {
+                setCarton(null);
+                setRecords([]);
+                setProducts([]);
+              }
+              setMessage(`箱号 ${cartonAction.carton.cartonNo} 已删除`);
+            }
+            setCartonAction(null);
+            await refreshBatch(batch);
+          }}
+        />
+      )}
+    </div>
+  );
 }
 
-type DraftRow = { id:number; recordId?:number; barcode:string; quantity:number; exceptionReason:string; photos:PhotoInput[] };
-const newDraft = ():DraftRow => ({id:Date.now()+Math.random(),barcode:'',quantity:1,exceptionReason:'',photos:[]});
+type DraftRow = {
+  id: number;
+  recordId?: number;
+  barcode: string;
+  quantity: number;
+  exceptionReason: string;
+  photos: PhotoInput[];
+};
+const newDraft = (): DraftRow => ({
+  id: Date.now() + Math.random(),
+  barcode: "",
+  quantity: 1,
+  exceptionReason: "",
+  photos: [],
+});
 
-function CartonView({batch, carton, products, records, refresh, notify}:{batch:Batch; carton:Carton; products:CartonProduct[]; records:RecordRow[]; refresh:()=>Promise<void>; notify:(v:string)=>void}) {
-  const [drafts,setDrafts]=useState<Record<Grade,DraftRow[]>>({A:[newDraft()],B:[newDraft()],C:[newDraft()],D:[newDraft()]});
-  const [editingExisting,setEditingExisting]=useState(false);
-  const [selectedUpc,setSelectedUpc]=useState<string|null>(null);
-  const stats = useMemo(() => ([['A',carton.gradeA],['B',carton.gradeB],['C',carton.gradeC],['D',carton.gradeD]]), [carton]);
-  useEffect(()=>setSelectedUpc(null),[carton.id]);
-  const selectedProduct=products.find(product=>product.upc===selectedUpc)??null;
-  const visibleRecords=selectedUpc?records.filter(record=>record.barcode===selectedUpc):records;
-  const update=(grade:Grade,id:number,patch:Partial<DraftRow>)=>setDrafts(v=>({...v,[grade]:v[grade].map(row=>row.id===id?{...row,...patch}:row)}));
-  const add=(grade:Grade)=>setDrafts(v=>({...v,[grade]:[...v[grade],newDraft()]}));
-  const remove=(grade:Grade,id:number)=>setDrafts(v=>({...v,[grade]:v[grade].length===1?[newDraft()]:v[grade].filter(row=>row.id!==id)}));
-  const addPhotoInputs=(grade:Grade,id:number,photos:PhotoInput[])=>setDrafts(current=>{const row=current[grade].find(r=>r.id===id);if(!row)return current;if(row.photos.length+photos.length>3){notify('每条记录最多添加 3 张图片');return current;}return {...current,[grade]:current[grade].map(item=>item.id===id?{...item,photos:[...item.photos,...photos]}:item)};});
-  const addPhotos=async(grade:Grade,id:number,files:File[])=>{const valid=files.filter(f=>['image/jpeg','image/png'].includes(f.type));if(valid.length!==files.length){notify('仅支持 JPG、JPEG 和 PNG 图片');return;}const photos=await Promise.all(valid.map(async f=>({name:f.name,dataBase64:(await fileData(f)).split(',')[1]})));addPhotoInputs(grade,id,photos);};
-  const active=(["A","B","C","D"] as Grade[]).flatMap(grade=>drafts[grade].filter(r=>r.barcode.trim()||r.exceptionReason.trim()||r.photos.length).map(row=>({grade,row})));
-  const beginEdit=()=>{const grouped=Object.fromEntries((["A","B","C","D"] as Grade[]).map(grade=>{const rows=records.filter(record=>record.grade===grade).map(record=>({id:Date.now()+Math.random(),recordId:record.id,barcode:record.barcode,quantity:record.quantity,exceptionReason:record.exceptionReason,photos:[]}));return [grade,rows.length?rows:[newDraft()]];})) as Record<Grade,DraftRow[]>;setDrafts(grouped);setEditingExisting(true);requestAnimationFrame(()=>document.querySelector('.entry')?.scrollIntoView({behavior:'smooth',block:'start'}));};
-  const cancelEdit=()=>{setDrafts({A:[newDraft()],B:[newDraft()],C:[newDraft()],D:[newDraft()]});setEditingExisting(false);};
-  const saveAll=async()=>{if(carton.status==='completed'){notify('该箱已完成，请先点击“重新打开”再修改');return;}if(!active.length&&!editingExisting){notify('请先输入商品条码');return;}if(active.some(x=>!x.row.barcode.trim())){notify('每行都必须填写商品条码');return;}if(active.some(x=>!Number.isInteger(x.row.quantity)||x.row.quantity<1)){notify('数量必须是正整数');return;}try{if(editingExisting){await api.replaceCartonRecords({batchId:batch.id,cartonId:carton.id,records:active.map(({grade,row})=>({id:row.recordId,barcode:row.barcode.trim(),grade,quantity:row.quantity,exceptionReason:row.exceptionReason.trim(),photos:row.photos}))});}else{for(const {grade,row} of active){await api.createRecord({batchId:batch.id,cartonId:carton.id,barcode:row.barcode.trim(),grade,quantity:row.quantity,exceptionReason:row.exceptionReason.trim(),photos:row.photos});}}setDrafts({A:[newDraft()],B:[newDraft()],C:[newDraft()],D:[newDraft()]});setEditingExisting(false);await refresh();notify(editingExisting?'本箱修改已保存':'保存成功');}catch(e){notify(String(e));}};
-  const difference=carton.referenceQty===null?null:carton.inspectedQty-carton.referenceQty;
-  return <><section className="summary product-summary"><div><h2>箱号 {carton.cartonNo}</h2><p>参考数量 {carton.referenceQty??'无'} · 已质检 {carton.inspectedQty} · 装箱数量 {carton.sealedQty}</p></div><div className="upc-list">{products.map(product=><button key={product.id} className={selectedUpc===product.upc?'active':''} onClick={()=>setSelectedUpc(current=>current===product.upc?null:product.upc)}><strong>{product.upc}</strong><span>：{product.unitsPerCarton}</span></button>)}{!products.length&&<span className="no-product">该箱暂无导入的 UPC</span>}</div></section>
-    {selectedProduct&&<section className="product-detail"><div><span>UPC</span><strong>{selectedProduct.upc}</strong></div><div><span>货号</span><strong>{selectedProduct.itemNo||'—'}</strong></div><div><span>颜色名称</span><strong>{selectedProduct.colorName||'—'}</strong></div><div><span>颜色编号</span><strong>{selectedProduct.colorNo||'—'}</strong></div><div><span>商品描述</span><strong>{selectedProduct.description||'—'}</strong></div><div><span>尺寸</span><strong>{selectedProduct.sizeDimension||'—'}</strong></div><div><span>箱数</span><strong>{selectedProduct.cartonCount??'—'}</strong></div><div><span>每箱数量</span><strong>{selectedProduct.unitsPerCarton}</strong></div><div><span>总数量</span><strong>{selectedProduct.totalUnits??'—'}</strong></div></section>}
-    {carton.status!=='completed'&&<section className="entry"><div className="section-title"><h3>{editingExisting?'修改本箱录入信息':'质检录入'}</h3>{editingExisting&&<button onClick={cancelEdit}>取消修改</button>}</div>{(["A","B","C","D"] as Grade[]).map(grade=><GradePanel key={grade} grade={grade} rows={drafts[grade]} add={()=>add(grade)} remove={id=>remove(grade,id)} update={(id,p)=>update(grade,id,p)} addPhotos={(id,files)=>addPhotos(grade,id,files)}/>)}<button className="primary save" onClick={saveAll}>{editingExisting?'保存本箱修改':'保存全部录入'}</button></section>}
-    <section className="records-layout"><div className="records"><div className="section-title"><h3>{selectedUpc?`UPC ${selectedUpc} 的录入明细`:'本箱已录入明细'}</h3><div className="record-actions">{carton.status!=='completed'&&<button disabled={!records.length||editingExisting} onClick={beginEdit}>修改本箱</button>}{carton.status==='completed'?<button onClick={async()=>{try{await api.reopenCarton(carton.id);await refresh();notify('已重新打开该箱，可继续修改');}catch(e){notify(String(e));}}}>重新打开</button>:<button disabled={!records.length||editingExisting} onClick={async()=>{const reference=carton.referenceQty===null?'无':String(carton.referenceQty);const diff=difference===null?'无参考数量':difference===0?'一致':difference>0?`多 ${difference}`:`少 ${Math.abs(difference)}`;if(!confirm(`实际质检：${carton.inspectedQty}\n参考数量：${reference}\n差异：${diff}\nA/B/C/D：${carton.gradeA}/${carton.gradeB}/${carton.gradeC}/${carton.gradeD}\n装箱数量：${carton.sealedQty}\n\n确认完成本箱？`))return;try{await api.completeCarton(carton.id);await refresh();notify('本箱已完成');}catch(e){notify(String(e));}}}>完成本箱</button>}</div></div><table><thead><tr><th>序号</th><th>商品条码</th><th>等级</th><th>数量</th><th>异常原因</th></tr></thead><tbody>{visibleRecords.map((r,i)=><tr key={r.id}><td>{i+1}</td><td>{r.barcode}</td><td><span className={`grade g${r.grade}`}>{r.grade}</span></td><td>{r.quantity}</td><td>{r.exceptionReason||'—'}</td></tr>)}</tbody></table>{selectedUpc&&!visibleRecords.length&&<p className="table-empty">该 UPC 暂无质检记录</p>}</div><aside className="reference-card"><h3>数量参考</h3><dl><div><dt>导入参考数量</dt><dd>{carton.referenceQty??'无参考'}</dd></div><div><dt>实际质检数量</dt><dd>{carton.inspectedQty}</dd></div><div><dt>装箱数量</dt><dd>{carton.sealedQty}</dd></div><div><dt>差异</dt><dd className={difference===0?'match':difference===null?'':'mismatch'}>{difference===null?'无参考':difference===0?'一致':difference>0?`多 ${difference}`:`少 ${Math.abs(difference)}`}</dd></div></dl><div className="mini-grades">{stats.map(([g,n])=><span key={g} className={`grade g${g}`}>{g} {n}</span>)}</div></aside></section></>;
+function CartonView({
+  batch,
+  carton,
+  products,
+  records,
+  refresh,
+  notify,
+}: {
+  batch: Batch;
+  carton: Carton;
+  products: CartonProduct[];
+  records: RecordRow[];
+  refresh: () => Promise<void>;
+  notify: (v: string) => void;
+}) {
+  const [drafts, setDrafts] = useState<Record<Grade, DraftRow[]>>({
+    A: [newDraft()],
+    B: [newDraft()],
+    C: [newDraft()],
+    D: [newDraft()],
+  });
+  const [editingExisting, setEditingExisting] = useState(false);
+  const [selectedUpc, setSelectedUpc] = useState<string | null>(null);
+  const stats = useMemo(
+    () => [
+      ["A", carton.gradeA],
+      ["B", carton.gradeB],
+      ["C", carton.gradeC],
+      ["D", carton.gradeD],
+    ],
+    [carton],
+  );
+  useEffect(() => setSelectedUpc(null), [carton.id]);
+  const selectedProduct =
+    products.find((product) => product.upc === selectedUpc) ?? null;
+  const visibleRecords = selectedUpc
+    ? records.filter((record) => record.barcode === selectedUpc)
+    : records;
+  const update = (grade: Grade, id: number, patch: Partial<DraftRow>) =>
+    setDrafts((v) => ({
+      ...v,
+      [grade]: v[grade].map((row) =>
+        row.id === id ? { ...row, ...patch } : row,
+      ),
+    }));
+  const add = (grade: Grade) =>
+    setDrafts((v) => ({ ...v, [grade]: [...v[grade], newDraft()] }));
+  const remove = (grade: Grade, id: number) =>
+    setDrafts((v) => ({
+      ...v,
+      [grade]:
+        v[grade].length === 1
+          ? [newDraft()]
+          : v[grade].filter((row) => row.id !== id),
+    }));
+  const addPhotoInputs = (grade: Grade, id: number, photos: PhotoInput[]) =>
+    setDrafts((current) => {
+      const row = current[grade].find((r) => r.id === id);
+      if (!row) return current;
+      if (row.photos.length + photos.length > 3) {
+        notify("每条记录最多添加 3 张图片");
+        return current;
+      }
+      return {
+        ...current,
+        [grade]: current[grade].map((item) =>
+          item.id === id
+            ? { ...item, photos: [...item.photos, ...photos] }
+            : item,
+        ),
+      };
+    });
+  const addPhotos = async (grade: Grade, id: number, files: File[]) => {
+    if (!files.length || files.some((file) => file.size === 0)) {
+      notify("图片内容为空，请重新复制或选择图片");
+      return;
+    }
+    const valid = files.filter((f) =>
+      ["image/jpeg", "image/png"].includes(f.type),
+    );
+    if (valid.length !== files.length) {
+      notify("仅支持 JPG、JPEG 和 PNG 图片");
+      return;
+    }
+    try {
+      const photos = await Promise.all(
+        valid.map(async (f) => {
+          const dataBase64 = (await fileData(f)).split(",")[1] ?? "";
+          if (!dataBase64) throw new Error(`图片 ${f.name} 没有可读取的内容`);
+          return { name: f.name, dataBase64 };
+        }),
+      );
+      addPhotoInputs(grade, id, photos);
+    } catch (error) {
+      notify(String(error));
+    }
+  };
+  const active = (["A", "B", "C", "D"] as Grade[]).flatMap((grade) =>
+    drafts[grade]
+      .filter(
+        (r) => r.barcode.trim() || r.exceptionReason.trim() || r.photos.length,
+      )
+      .map((row) => ({ grade, row })),
+  );
+  const beginEdit = () => {
+    const grouped = Object.fromEntries(
+      (["A", "B", "C", "D"] as Grade[]).map((grade) => {
+        const rows = records
+          .filter((record) => record.grade === grade)
+          .map((record) => ({
+            id: Date.now() + Math.random(),
+            recordId: record.id,
+            barcode: record.barcode,
+            quantity: record.quantity,
+            exceptionReason: record.exceptionReason,
+            photos: [],
+          }));
+        return [grade, rows.length ? rows : [newDraft()]];
+      }),
+    ) as Record<Grade, DraftRow[]>;
+    setDrafts(grouped);
+    setEditingExisting(true);
+    requestAnimationFrame(() =>
+      document
+        .querySelector(".entry")
+        ?.scrollIntoView({ behavior: "smooth", block: "start" }),
+    );
+  };
+  const cancelEdit = () => {
+    setDrafts({
+      A: [newDraft()],
+      B: [newDraft()],
+      C: [newDraft()],
+      D: [newDraft()],
+    });
+    setEditingExisting(false);
+  };
+  const saveAll = async () => {
+    if (carton.status === "completed") {
+      notify("该箱已完成，请先点击“重新打开”再修改");
+      return;
+    }
+    if (!active.length && !editingExisting) {
+      notify("请先输入商品条码");
+      return;
+    }
+    if (active.some((x) => !x.row.barcode.trim())) {
+      notify("每行都必须填写商品条码");
+      return;
+    }
+    if (
+      active.some(
+        (x) => !Number.isInteger(x.row.quantity) || x.row.quantity < 1,
+      )
+    ) {
+      notify("数量必须是正整数");
+      return;
+    }
+    try {
+      if (editingExisting) {
+        await api.replaceCartonRecords({
+          batchId: batch.id,
+          cartonId: carton.id,
+          records: active.map(({ grade, row }) => ({
+            id: row.recordId,
+            barcode: row.barcode.trim(),
+            grade,
+            quantity: row.quantity,
+            exceptionReason: row.exceptionReason.trim(),
+            photos: row.photos,
+          })),
+        });
+      } else {
+        for (const { grade, row } of active) {
+          await api.createRecord({
+            batchId: batch.id,
+            cartonId: carton.id,
+            barcode: row.barcode.trim(),
+            grade,
+            quantity: row.quantity,
+            exceptionReason: row.exceptionReason.trim(),
+            photos: row.photos,
+          });
+        }
+      }
+      setDrafts({
+        A: [newDraft()],
+        B: [newDraft()],
+        C: [newDraft()],
+        D: [newDraft()],
+      });
+      setEditingExisting(false);
+      await refresh();
+      notify(editingExisting ? "本箱修改已保存" : "保存成功");
+    } catch (e) {
+      notify(String(e));
+    }
+  };
+  const difference =
+    carton.referenceQty === null
+      ? null
+      : carton.inspectedQty - carton.referenceQty;
+  return (
+    <>
+      <section className="summary product-summary">
+        <div>
+          <h2>箱号 {carton.cartonNo}</h2>
+          <p>
+            参考数量 {carton.referenceQty ?? "无"} · 已质检{" "}
+            {carton.inspectedQty} · 装箱数量 {carton.sealedQty}
+          </p>
+        </div>
+        <div className="upc-list">
+          {products.map((product) => (
+            <button
+              key={product.id}
+              className={selectedUpc === product.upc ? "active" : ""}
+              onClick={() =>
+                setSelectedUpc((current) =>
+                  current === product.upc ? null : product.upc,
+                )
+              }
+            >
+              <strong>{product.upc}</strong>
+              <span>：{product.unitsPerCarton}</span>
+            </button>
+          ))}
+          {!products.length && (
+            <span className="no-product">该箱暂无导入的 UPC</span>
+          )}
+        </div>
+      </section>
+      {selectedProduct && (
+        <section className="product-detail">
+          <div>
+            <span>UPC</span>
+            <strong>{selectedProduct.upc}</strong>
+          </div>
+          <div>
+            <span>货号</span>
+            <strong>{selectedProduct.itemNo || "—"}</strong>
+          </div>
+          <div>
+            <span>颜色名称</span>
+            <strong>{selectedProduct.colorName || "—"}</strong>
+          </div>
+          <div>
+            <span>颜色编号</span>
+            <strong>{selectedProduct.colorNo || "—"}</strong>
+          </div>
+          <div>
+            <span>商品描述</span>
+            <strong>{selectedProduct.description || "—"}</strong>
+          </div>
+          <div>
+            <span>尺寸</span>
+            <strong>{selectedProduct.sizeDimension || "—"}</strong>
+          </div>
+          <div>
+            <span>箱数</span>
+            <strong>{selectedProduct.cartonCount ?? "—"}</strong>
+          </div>
+          <div>
+            <span>每箱数量</span>
+            <strong>{selectedProduct.unitsPerCarton}</strong>
+          </div>
+          <div>
+            <span>总数量</span>
+            <strong>{selectedProduct.totalUnits ?? "—"}</strong>
+          </div>
+        </section>
+      )}
+      {carton.status !== "completed" && (
+        <section className="entry">
+          <div className="section-title">
+            <h3>{editingExisting ? "修改本箱录入信息" : "质检录入"}</h3>
+            {editingExisting && <button onClick={cancelEdit}>取消修改</button>}
+          </div>
+          {(["A", "B", "C", "D"] as Grade[]).map((grade) => (
+            <GradePanel
+              key={grade}
+              grade={grade}
+              rows={drafts[grade]}
+              add={() => add(grade)}
+              remove={(id) => remove(grade, id)}
+              update={(id, p) => update(grade, id, p)}
+              addPhotos={(id, files) => addPhotos(grade, id, files)}
+            />
+          ))}
+          <button className="primary save" onClick={saveAll}>
+            {editingExisting ? "保存本箱修改" : "保存全部录入"}
+          </button>
+        </section>
+      )}
+      <section className="records-layout">
+        <div className="records">
+          <div className="section-title">
+            <h3>
+              {selectedUpc ? `UPC ${selectedUpc} 的录入明细` : "本箱已录入明细"}
+            </h3>
+            <div className="record-actions">
+              {carton.status !== "completed" && (
+                <button
+                  disabled={!records.length || editingExisting}
+                  onClick={beginEdit}
+                >
+                  修改本箱
+                </button>
+              )}
+              {carton.status === "completed" ? (
+                <button
+                  onClick={async () => {
+                    try {
+                      await api.reopenCarton(carton.id);
+                      await refresh();
+                      notify("已重新打开该箱，可继续修改");
+                    } catch (e) {
+                      notify(String(e));
+                    }
+                  }}
+                >
+                  重新打开
+                </button>
+              ) : (
+                <button
+                  disabled={!records.length || editingExisting}
+                  onClick={async () => {
+                    const reference =
+                      carton.referenceQty === null
+                        ? "无"
+                        : String(carton.referenceQty);
+                    const diff =
+                      difference === null
+                        ? "无参考数量"
+                        : difference === 0
+                          ? "一致"
+                          : difference > 0
+                            ? `多 ${difference}`
+                            : `少 ${Math.abs(difference)}`;
+                    if (
+                      !confirm(
+                        `实际质检：${carton.inspectedQty}\n参考数量：${reference}\n差异：${diff}\nA/B/C/D：${carton.gradeA}/${carton.gradeB}/${carton.gradeC}/${carton.gradeD}\n装箱数量：${carton.sealedQty}\n\n确认完成本箱？`,
+                      )
+                    )
+                      return;
+                    try {
+                      await api.completeCarton(carton.id);
+                      await refresh();
+                      notify("本箱已完成");
+                    } catch (e) {
+                      notify(String(e));
+                    }
+                  }}
+                >
+                  完成本箱
+                </button>
+              )}
+            </div>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>序号</th>
+                <th>商品条码</th>
+                <th>等级</th>
+                <th>数量</th>
+                <th>异常原因</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visibleRecords.map((r, i) => (
+                <tr key={r.id}>
+                  <td>{i + 1}</td>
+                  <td>{r.barcode}</td>
+                  <td>
+                    <span className={`grade g${r.grade}`}>{r.grade}</span>
+                  </td>
+                  <td>{r.quantity}</td>
+                  <td>{r.exceptionReason || "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {selectedUpc && !visibleRecords.length && (
+            <p className="table-empty">该 UPC 暂无质检记录</p>
+          )}
+        </div>
+        <aside className="reference-card">
+          <h3>数量参考</h3>
+          <dl>
+            <div>
+              <dt>导入参考数量</dt>
+              <dd>{carton.referenceQty ?? "无参考"}</dd>
+            </div>
+            <div>
+              <dt>实际质检数量</dt>
+              <dd>{carton.inspectedQty}</dd>
+            </div>
+            <div>
+              <dt>装箱数量</dt>
+              <dd>{carton.sealedQty}</dd>
+            </div>
+            <div>
+              <dt>差异</dt>
+              <dd
+                className={
+                  difference === 0
+                    ? "match"
+                    : difference === null
+                      ? ""
+                      : "mismatch"
+                }
+              >
+                {difference === null
+                  ? "无参考"
+                  : difference === 0
+                    ? "一致"
+                    : difference > 0
+                      ? `多 ${difference}`
+                      : `少 ${Math.abs(difference)}`}
+              </dd>
+            </div>
+          </dl>
+          <div className="mini-grades">
+            {stats.map(([g, n]) => (
+              <span key={g} className={`grade g${g}`}>
+                {g} {n}
+              </span>
+            ))}
+          </div>
+        </aside>
+      </section>
+    </>
+  );
 }
 
-function GradePanel({grade,rows,add,remove,update,addPhotos}:{grade:Grade;rows:DraftRow[];add:()=>void;remove:(id:number)=>void;update:(id:number,p:Partial<DraftRow>)=>void;addPhotos:(id:number,files:File[])=>void}) {
-  const [pasteRow,setPasteRow]=useState<number|null>(null);
-  const pasteFiles=(id:number,items:DataTransferItemList)=>{const files=Array.from(items).filter(item=>item.kind==='file'&&item.type.startsWith('image/')).map(item=>item.getAsFile()).filter((file):file is File=>Boolean(file));if(files.length)addPhotos(id,files);};
-  const readClipboard=async(id:number)=>{try{const items=await navigator.clipboard.read();const files:File[]=[];for(const item of items){for(const type of item.types.filter(type=>type.startsWith('image/'))){const blob=await item.getType(type);files.push(new File([blob],`粘贴图片-${Date.now()}.${type.includes('png')?'png':'jpg'}`,{type}));}}if(!files.length)throw new Error('剪贴板中没有图片');addPhotos(id,files);}catch(error){alert(`无法读取剪贴板图片：${String(error)}\n可先点击图片区域，再按 Ctrl+V（Mac 按 Command+V）。`);}setPasteRow(null);};
-  return <div className={`grade-panel panel-${grade}`}><div className="grade-panel-title"><span className={`grade g${grade}`}>{grade}级</span><button className="add-row" onClick={add} title={`增加一行 ${grade} 级记录`}>＋</button></div><div className="draft-head"><span>商品条码</span><span>数量</span><span>异常原因</span><span>图片</span><span/></div>{rows.map((row,index)=><div className="draft-row" key={row.id}><input autoFocus={index===rows.length-1&&rows.length>1} value={row.barcode} onChange={e=>update(row.id,{barcode:e.target.value})} placeholder="输入或扫码"/><input type="number" min="1" step="1" value={row.quantity} onChange={e=>update(row.id,{quantity:Number(e.target.value)})}/><input value={row.exceptionReason} onChange={e=>update(row.id,{exceptionReason:e.target.value})} placeholder="选填"/>{row.recordId?<div className="drop-zone saved-photo-note">原有图片将保留</div>:<label className="drop-zone photo-zone" tabIndex={0} onPaste={event=>{event.preventDefault();pasteFiles(row.id,event.clipboardData.items)}} onContextMenu={event=>{event.preventDefault();setPasteRow(row.id)}}><input type="file" accept="image/png,image/jpeg" multiple onChange={e=>addPhotos(row.id,[...(e.target.files??[])])}/><span>{row.photos.length?row.photos.map((p,i)=><span className="photo-preview" key={`${p.name}-${i}`} title={p.name}><img src={`data:${p.name.toLowerCase().endsWith('.png')?'image/png':'image/jpeg'};base64,${p.dataBase64}`} alt={p.name}/><button type="button" aria-label={`删除图片 ${p.name}`} onClick={e=>{e.preventDefault();update(row.id,{photos:row.photos.filter((_,x)=>x!==i)})}}>×</button></span>):'选择图片，或粘贴微信图片'}</span>{pasteRow===row.id&&<span className="photo-context-menu" onClick={event=>event.preventDefault()}><button type="button" onClick={()=>readClipboard(row.id)}>粘贴图片</button></span>}</label>}<button className="danger remove-row" onClick={()=>remove(row.id)}>删除</button></div>)}</div>
+function GradePanel({
+  grade,
+  rows,
+  add,
+  remove,
+  update,
+  addPhotos,
+}: {
+  grade: Grade;
+  rows: DraftRow[];
+  add: () => void;
+  remove: (id: number) => void;
+  update: (id: number, p: Partial<DraftRow>) => void;
+  addPhotos: (id: number, files: File[]) => void;
+}) {
+  const [pasteMenu, setPasteMenu] = useState<{
+    rowId: number;
+    x: number;
+    y: number;
+  } | null>(null);
+  const fileInputs = useRef(new Map<number, HTMLInputElement>());
+  const lastRightClick = useRef(0);
+  useEffect(() => {
+    if (!pasteMenu) return;
+    const close = () => setPasteMenu(null);
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") close();
+    };
+    window.addEventListener("click", close);
+    window.addEventListener("contextmenu", close);
+    window.addEventListener("keydown", escape);
+    return () => {
+      window.removeEventListener("click", close);
+      window.removeEventListener("contextmenu", close);
+      window.removeEventListener("keydown", escape);
+    };
+  }, [pasteMenu]);
+  const pasteFiles = (id: number, items: DataTransferItemList) => {
+    const files = Array.from(items)
+      .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
+      .map((item) => item.getAsFile())
+      .filter((file): file is File => Boolean(file));
+    if (files.length) addPhotos(id, files);
+  };
+  const readClipboard = async (id: number) => {
+    setPasteMenu(null);
+    try {
+      const filePhoto = await api.readClipboardFileImage();
+      if (filePhoto) {
+        const binary = atob(filePhoto.dataBase64);
+        const bytes = Uint8Array.from(binary, (character) =>
+          character.charCodeAt(0),
+        );
+        addPhotos(id, [
+          new File([bytes], filePhoto.name, {
+            type: photoMimeType(filePhoto.dataBase64),
+          }),
+        ]);
+        return;
+      }
+      const clipboardImage = await readImage();
+      try {
+        const [rgba, size] = await Promise.all([
+          clipboardImage.rgba(),
+          clipboardImage.size(),
+        ]);
+        if (!size.width || !size.height) throw new Error("剪贴板图片尺寸无效");
+        const expectedLength = size.width * size.height * 4;
+        if (rgba.length !== expectedLength)
+          throw new Error(
+            `剪贴板图片数据不完整（需要 ${expectedLength} 字节，实际 ${rgba.length} 字节）`,
+          );
+        const pixels = new Uint8ClampedArray(rgba);
+        let hasVisiblePixel = false;
+        for (let index = 3; index < pixels.length; index += 4) {
+          if (pixels[index] !== 0) {
+            hasVisiblePixel = true;
+            break;
+          }
+        }
+        // Windows DIB/微信剪贴板有时将未使用的 Alpha 通道全部设为 0，
+        // 若原样写入 PNG，整张图片会变成完全透明。
+        if (!hasVisiblePixel) {
+          for (let index = 3; index < pixels.length; index += 4) {
+            pixels[index] = 255;
+          }
+        }
+        const canvas = document.createElement("canvas");
+        canvas.width = size.width;
+        canvas.height = size.height;
+        const context = canvas.getContext("2d");
+        if (!context) throw new Error("无法处理剪贴板图片");
+        context.putImageData(
+          new ImageData(pixels, size.width, size.height),
+          0,
+          0,
+        );
+        const blob = await new Promise<Blob>((resolve, reject) =>
+          canvas.toBlob(
+            (value) =>
+              value ? resolve(value) : reject(new Error("图片转换失败")),
+            "image/png",
+          ),
+        );
+        addPhotos(id, [
+          new File([blob], `微信粘贴图片-${Date.now()}.png`, {
+            type: "image/png",
+          }),
+        ]);
+      } finally {
+        await clipboardImage.close();
+      }
+    } catch (error) {
+      alert(
+        `无法读取剪贴板图片：${String(error)}\n请先在微信中复制图片，再右键图片录入区域选择“粘贴图片”。`,
+      );
+    }
+  };
+  return (
+    <>
+      <div className={`grade-panel panel-${grade}`}>
+        <div className="grade-panel-title">
+          <span className={`grade g${grade}`}>{grade}级</span>
+          <button
+            className="add-row"
+            onClick={add}
+            title={`增加一行 ${grade} 级记录`}
+          >
+            ＋
+          </button>
+        </div>
+        <div className="draft-head">
+          <span>商品条码</span>
+          <span>数量</span>
+          <span>异常原因</span>
+          <span>图片</span>
+          <span />
+        </div>
+        {rows.map((row, index) => (
+          <div className="draft-row" key={row.id}>
+            <input
+              autoFocus={index === rows.length - 1 && rows.length > 1}
+              value={row.barcode}
+              onChange={(e) => update(row.id, { barcode: e.target.value })}
+              placeholder="输入或扫码"
+            />
+            <input
+              type="number"
+              min="1"
+              step="1"
+              value={row.quantity}
+              onChange={(e) =>
+                update(row.id, { quantity: Number(e.target.value) })
+              }
+            />
+            <input
+              value={row.exceptionReason}
+              onChange={(e) =>
+                update(row.id, { exceptionReason: e.target.value })
+              }
+              placeholder="选填"
+            />
+            {row.recordId ? (
+              <div className="drop-zone saved-photo-note">原有图片将保留</div>
+            ) : (
+              <div
+                className="drop-zone photo-zone"
+                role="button"
+                tabIndex={0}
+                onClick={(event) => {
+                  if (Date.now() - lastRightClick.current < 350) return;
+                  const target = event.target as HTMLElement;
+                  if (target.closest("button, input, .photo-preview")) return;
+                  fileInputs.current.get(row.id)?.click();
+                }}
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter" && event.key !== " ") return;
+                  event.preventDefault();
+                  fileInputs.current.get(row.id)?.click();
+                }}
+                onPaste={(event) => {
+                  event.preventDefault();
+                  pasteFiles(row.id, event.clipboardData.items);
+                }}
+                onContextMenu={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  lastRightClick.current = Date.now();
+                  setPasteMenu({
+                    rowId: row.id,
+                    x: event.clientX,
+                    y: event.clientY,
+                  });
+                }}
+              >
+                <input
+                  ref={(element) => {
+                    if (element) fileInputs.current.set(row.id, element);
+                    else fileInputs.current.delete(row.id);
+                  }}
+                  type="file"
+                  accept="image/png,image/jpeg"
+                  multiple
+                  onClick={(event) => event.stopPropagation()}
+                  onChange={(event) => {
+                    addPhotos(row.id, [...(event.target.files ?? [])]);
+                    event.target.value = "";
+                  }}
+                />
+                <span>
+                  {row.photos.length
+                    ? row.photos.map((p, i) => (
+                        <span
+                          className="photo-preview"
+                          key={`${p.name}-${i}`}
+                          title={p.name}
+                        >
+                          <img
+                            src={`data:${photoMimeType(p.dataBase64)};base64,${p.dataBase64}`}
+                            alt={p.name}
+                          />
+                          <button
+                            type="button"
+                            aria-label={`删除图片 ${p.name}`}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              update(row.id, {
+                                photos: row.photos.filter((_, x) => x !== i),
+                              });
+                            }}
+                          >
+                            ×
+                          </button>
+                        </span>
+                      ))
+                    : "左键选择图片，右键粘贴图片"}
+                </span>
+              </div>
+            )}
+            <button
+              className="danger remove-row"
+              onClick={() => remove(row.id)}
+            >
+              删除
+            </button>
+          </div>
+        ))}
+      </div>
+      {pasteMenu &&
+        createPortal(
+          <div
+            className="photo-context-menu"
+            style={{ left: pasteMenu.x, top: pasteMenu.y }}
+            role="menu"
+            onClick={(event) => event.stopPropagation()}
+            onContextMenu={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+            }}
+          >
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => readClipboard(pasteMenu.rowId)}
+            >
+              粘贴图片
+            </button>
+          </div>,
+          document.body,
+        )}
+    </>
+  );
 }
 
-function BatchDialog({close,save}:{close:()=>void;save:(v:typeof emptyBatch)=>Promise<void>}) { const [v,setV]=useState(emptyBatch); return <div className="modal"><div className="dialog"><h2>新建质检批次</h2><div className="form-grid">{Object.entries(v).map(([k,val])=><label key={k}>{batchLabels[k]??k}<input type={typeof val==='number'?'number':k==='inspectionDate'?'date':'text'} value={val} onChange={e=>setV({...v,[k]:typeof val==='number'?Number(e.target.value):e.target.value})}/></label>)}</div><div className="dialog-actions"><button onClick={close}>取消</button><button className="primary" onClick={()=>save(v)}>创建</button></div></div></div> }
-function DeleteBatchDialog({batch,close,remove}:{batch:Batch;close:()=>void;remove:()=>Promise<void>}){const [stage,setStage]=useState<1|2>(1);const [typed,setTyped]=useState('');const [busy,setBusy]=useState(false);if(stage===1)return <div className="modal delete-modal"><div className="dialog delete-warning"><div className="warning-symbol">!</div><h2>删除批次？</h2><p>批次 <strong>{batch.batchNo}</strong> 及其中所有箱号、质检记录和图片将被永久删除。</p><div className="dialog-actions"><button onClick={close}>取消</button><button className="danger-button" onClick={()=>setStage(2)}>继续</button></div></div></div>;return <div className="modal delete-modal second-confirm"><div className="dialog delete-confirm"><h2>最终确认</h2><p>请输入批次号 <strong>{batch.batchNo}</strong> 确认删除：</p><input autoFocus value={typed} onChange={event=>setTyped(event.target.value)} placeholder="输入完整批次号"/><div className="dialog-actions"><button onClick={close}>返回</button><button className="danger-button" disabled={typed!==batch.batchNo||busy} onClick={async()=>{setBusy(true);try{await remove();}finally{setBusy(false)}}}>{busy?'正在删除…':'永久删除'}</button></div></div></div>}
-function CartonDialog({batchId,saved}:{batchId:number;saved:()=>Promise<void>}) { const [no,setNo]=useState('');const close=()=> (document.getElementById('new-carton') as HTMLDialogElement)?.close();return <dialog id="new-carton"><h2>添加箱号</h2><label>箱号<input value={no} onChange={e=>setNo(e.target.value)}/></label><div className="dialog-actions"><button onClick={close}>取消</button><button className="primary" onClick={async()=>{await api.createCarton(batchId,no);setNo('');close();await saved();}}>保存</button></div></dialog> }
-function CartonActionDialog({action,close,save}:{action:{carton:Carton;type:'rename'|'delete'};close:()=>void;save:(value:string)=>Promise<void>}){const [value,setValue]=useState(action.carton.cartonNo);const [busy,setBusy]=useState(false);return <div className="modal"><div className="dialog carton-action-dialog"><h2>{action.type==='rename'?'修改箱号':'删除该箱'}</h2>{action.type==='rename'?<label>新箱号<input autoFocus value={value} onChange={event=>setValue(event.target.value)} onKeyDown={event=>{if(event.key==='Enter'&&value.trim())save(value.trim())}}/></label>:<p>确定删除箱号 <strong>{action.carton.cartonNo}</strong>？该箱的 UPC、质检记录和图片也会一并删除，此操作无法撤销。</p>}<div className="dialog-actions"><button onClick={close}>取消</button><button className={action.type==='delete'?'danger-button':'primary'} disabled={busy||(action.type==='rename'&&!value.trim())} onClick={async()=>{setBusy(true);try{await save(value.trim());}finally{setBusy(false)}}}>{busy?'处理中…':action.type==='rename'?'保存':'确认删除'}</button></div></div></div>}
-function ReportDialog({batch,cartons,close}:{batch:Batch;cartons:Carton[];close:()=>void}){const totals={A:cartons.reduce((n,c)=>n+c.gradeA,0),B:cartons.reduce((n,c)=>n+c.gradeB,0),C:cartons.reduce((n,c)=>n+c.gradeC,0),D:cartons.reduce((n,c)=>n+c.gradeD,0)};const total=totals.A+totals.B+totals.C+totals.D;return <div className="modal report-modal"><div className="dialog report-dialog"><div className="section-title"><div><h2>{batch.batchNo} 报表</h2><p>质检总数：{total}</p></div><button onClick={close}>关闭</button></div><div className="report-grades">{(["A","B","C","D"] as Grade[]).map(grade=><div className={`report-grade panel-${grade}`} key={grade}><span className={`grade g${grade}`}>{grade}级</span><strong>{totals[grade]}</strong><small>{total?`${(totals[grade]/total*100).toFixed(1)}%`:'0.0%'}</small><i style={{width:`${total?totals[grade]/total*100:0}%`}}/></div>)}</div><h3>箱号出入</h3><div className="report-table"><table><thead><tr><th>箱号</th><th>参考数量</th><th>实际数量</th><th>差异</th><th>状态</th></tr></thead><tbody>{cartons.map(c=>{const diff=c.referenceQty===null?null:c.inspectedQty-c.referenceQty;const state=c.inspectedQty===0?'未质检':diff===null?'无参考':diff===0?'一致':diff>0?`多 ${diff}`:`少 ${Math.abs(diff)}`;return <tr key={c.id} className={diff===0?'match-row':diff===null?'':'mismatch-row'}><td>{c.cartonNo}</td><td>{c.referenceQty??'—'}</td><td>{c.inspectedQty}</td><td>{diff===null?'—':diff>0?`+${diff}`:diff}</td><td>{state}</td></tr>})}</tbody></table></div></div></div>}
-function Notice({text,close}:{text:string;close:()=>void}) { return <div className="notice">{text}<button onClick={close}>×</button></div> }
-const batchLabels:Record<string,string>={batchNo:'批次号',inspectionDate:'质检日期'};
-const fileData=(file:File)=>new Promise<string>((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(String(r.result));r.onerror=reject;r.readAsDataURL(file)});
-async function exportData(batchId:number){const outputDir=await open({directory:true,multiple:false,title:'选择 Excel 导出文件夹'});if(!outputDir)return;const files=await api.exportBatch(batchId,outputDir);alert(`导出完成：\n${files.join('\n')}`)}
+function BatchDialog({
+  close,
+  save,
+}: {
+  close: () => void;
+  save: (v: typeof emptyBatch) => Promise<void>;
+}) {
+  const [v, setV] = useState(emptyBatch);
+  return (
+    <div className="modal">
+      <div className="dialog">
+        <h2>新建质检批次</h2>
+        <div className="form-grid">
+          {Object.entries(v).map(([k, val]) => (
+            <label key={k}>
+              {batchLabels[k] ?? k}
+              <input
+                type={
+                  typeof val === "number"
+                    ? "number"
+                    : k === "inspectionDate"
+                      ? "date"
+                      : "text"
+                }
+                value={val}
+                onChange={(e) =>
+                  setV({
+                    ...v,
+                    [k]:
+                      typeof val === "number"
+                        ? Number(e.target.value)
+                        : e.target.value,
+                  })
+                }
+              />
+            </label>
+          ))}
+        </div>
+        <div className="dialog-actions">
+          <button onClick={close}>取消</button>
+          <button className="primary" onClick={() => save(v)}>
+            创建
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+function DeleteBatchDialog({
+  batch,
+  close,
+  remove,
+}: {
+  batch: Batch;
+  close: () => void;
+  remove: () => Promise<void>;
+}) {
+  const [stage, setStage] = useState<1 | 2>(1);
+  const [typed, setTyped] = useState("");
+  const [busy, setBusy] = useState(false);
+  if (stage === 1)
+    return (
+      <div className="modal delete-modal">
+        <div className="dialog delete-warning">
+          <div className="warning-symbol">!</div>
+          <h2>删除批次？</h2>
+          <p>
+            批次 <strong>{batch.batchNo}</strong>{" "}
+            及其中所有箱号、质检记录和图片将被永久删除。
+          </p>
+          <div className="dialog-actions">
+            <button onClick={close}>取消</button>
+            <button className="danger-button" onClick={() => setStage(2)}>
+              继续
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  return (
+    <div className="modal delete-modal second-confirm">
+      <div className="dialog delete-confirm">
+        <h2>最终确认</h2>
+        <p>
+          请输入批次号 <strong>{batch.batchNo}</strong> 确认删除：
+        </p>
+        <input
+          autoFocus
+          value={typed}
+          onChange={(event) => setTyped(event.target.value)}
+          placeholder="输入完整批次号"
+        />
+        <div className="dialog-actions">
+          <button onClick={close}>返回</button>
+          <button
+            className="danger-button"
+            disabled={typed !== batch.batchNo || busy}
+            onClick={async () => {
+              setBusy(true);
+              try {
+                await remove();
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            {busy ? "正在删除…" : "永久删除"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+function CartonDialog({
+  batchId,
+  saved,
+}: {
+  batchId: number;
+  saved: () => Promise<void>;
+}) {
+  const [no, setNo] = useState("");
+  const close = () =>
+    (document.getElementById("new-carton") as HTMLDialogElement)?.close();
+  return (
+    <dialog id="new-carton">
+      <h2>添加箱号</h2>
+      <label>
+        箱号
+        <input value={no} onChange={(e) => setNo(e.target.value)} />
+      </label>
+      <div className="dialog-actions">
+        <button onClick={close}>取消</button>
+        <button
+          className="primary"
+          onClick={async () => {
+            await api.createCarton(batchId, no);
+            setNo("");
+            close();
+            await saved();
+          }}
+        >
+          保存
+        </button>
+      </div>
+    </dialog>
+  );
+}
+function CartonActionDialog({
+  action,
+  close,
+  save,
+}: {
+  action: { carton: Carton; type: "rename" | "delete" };
+  close: () => void;
+  save: (value: string) => Promise<void>;
+}) {
+  const [value, setValue] = useState(action.carton.cartonNo);
+  const [busy, setBusy] = useState(false);
+  return (
+    <div className="modal">
+      <div className="dialog carton-action-dialog">
+        <h2>{action.type === "rename" ? "修改箱号" : "删除该箱"}</h2>
+        {action.type === "rename" ? (
+          <label>
+            新箱号
+            <input
+              autoFocus
+              value={value}
+              onChange={(event) => setValue(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && value.trim()) save(value.trim());
+              }}
+            />
+          </label>
+        ) : (
+          <p>
+            确定删除箱号 <strong>{action.carton.cartonNo}</strong>？该箱的
+            UPC、质检记录和图片也会一并删除，此操作无法撤销。
+          </p>
+        )}
+        <div className="dialog-actions">
+          <button onClick={close}>取消</button>
+          <button
+            className={action.type === "delete" ? "danger-button" : "primary"}
+            disabled={busy || (action.type === "rename" && !value.trim())}
+            onClick={async () => {
+              setBusy(true);
+              try {
+                await save(value.trim());
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            {busy ? "处理中…" : action.type === "rename" ? "保存" : "确认删除"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+function ReportDialog({
+  batch,
+  cartons,
+  close,
+}: {
+  batch: Batch;
+  cartons: Carton[];
+  close: () => void;
+}) {
+  const totals = {
+    A: cartons.reduce((n, c) => n + c.gradeA, 0),
+    B: cartons.reduce((n, c) => n + c.gradeB, 0),
+    C: cartons.reduce((n, c) => n + c.gradeC, 0),
+    D: cartons.reduce((n, c) => n + c.gradeD, 0),
+  };
+  const total = totals.A + totals.B + totals.C + totals.D;
+  return (
+    <div className="modal report-modal">
+      <div className="dialog report-dialog">
+        <div className="section-title">
+          <div>
+            <h2>{batch.batchNo} 报表</h2>
+            <p>质检总数：{total}</p>
+          </div>
+          <button onClick={close}>关闭</button>
+        </div>
+        <div className="report-grades">
+          {(["A", "B", "C", "D"] as Grade[]).map((grade) => (
+            <div className={`report-grade panel-${grade}`} key={grade}>
+              <span className={`grade g${grade}`}>{grade}级</span>
+              <strong>{totals[grade]}</strong>
+              <small>
+                {total
+                  ? `${((totals[grade] / total) * 100).toFixed(1)}%`
+                  : "0.0%"}
+              </small>
+              <i
+                style={{
+                  width: `${total ? (totals[grade] / total) * 100 : 0}%`,
+                }}
+              />
+            </div>
+          ))}
+        </div>
+        <h3>箱号出入</h3>
+        <div className="report-table">
+          <table>
+            <thead>
+              <tr>
+                <th>箱号</th>
+                <th>参考数量</th>
+                <th>实际数量</th>
+                <th>差异</th>
+                <th>状态</th>
+              </tr>
+            </thead>
+            <tbody>
+              {cartons.map((c) => {
+                const diff =
+                  c.referenceQty === null
+                    ? null
+                    : c.inspectedQty - c.referenceQty;
+                const state =
+                  c.inspectedQty === 0
+                    ? "未质检"
+                    : diff === null
+                      ? "无参考"
+                      : diff === 0
+                        ? "一致"
+                        : diff > 0
+                          ? `多 ${diff}`
+                          : `少 ${Math.abs(diff)}`;
+                return (
+                  <tr
+                    key={c.id}
+                    className={
+                      diff === 0
+                        ? "match-row"
+                        : diff === null
+                          ? ""
+                          : "mismatch-row"
+                    }
+                  >
+                    <td>{c.cartonNo}</td>
+                    <td>{c.referenceQty ?? "—"}</td>
+                    <td>{c.inspectedQty}</td>
+                    <td>
+                      {diff === null ? "—" : diff > 0 ? `+${diff}` : diff}
+                    </td>
+                    <td>{state}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+function Notice({ text, close }: { text: string; close: () => void }) {
+  return (
+    <div className="notice">
+      {text}
+      <button onClick={close}>×</button>
+    </div>
+  );
+}
+const batchLabels: Record<string, string> = {
+  batchNo: "批次号",
+  inspectionDate: "质检日期",
+};
+const fileData = (file: File) =>
+  new Promise<string>((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result));
+    r.onerror = reject;
+    r.readAsDataURL(file);
+  });
+const photoMimeType = (dataBase64: string) => {
+  if (dataBase64.startsWith("iVBOR")) return "image/png";
+  if (dataBase64.startsWith("/9j/")) return "image/jpeg";
+  if (dataBase64.startsWith("R0lGOD")) return "image/gif";
+  if (dataBase64.startsWith("UklGR")) return "image/webp";
+  return "image/jpeg";
+};
+async function exportData(batchId: number) {
+  const outputDir = await open({
+    directory: true,
+    multiple: false,
+    title: "选择 Excel 导出文件夹",
+  });
+  if (!outputDir) return;
+  const files = await api.exportBatch(batchId, outputDir);
+  alert(`导出完成：\n${files.join("\n")}`);
+}
 export default App;

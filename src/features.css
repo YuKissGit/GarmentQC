@@ -9,5 +9,6 @@
 .photo-preview { position: relative !important; display: inline-block !important; width: 54px; height: 54px; }
 .photo-preview img { display: block; width: 54px; height: 54px; object-fit: cover; border-radius: 6px; border: 1px solid #d2dbd5; }
 .photo-preview button { position: absolute; right: -4px; top: -5px; width: 18px; height: 18px; padding: 0; border: 0; border-radius: 50%; background: #a53c35; color: #fff; line-height: 18px; }
-.photo-context-menu { position: absolute !important; z-index: 45; left: 10px; top: 40px; padding: 4px !important; background: #fff; border: 1px solid #d5ddd7; border-radius: 7px; box-shadow: 0 5px 18px #0003; }
-.photo-context-menu button { font-size: 13px; padding: 7px 12px; }
+.photo-context-menu { position: fixed; z-index: 100; min-width: 130px; padding: 5px; background: #fff; border: 1px solid #d5ddd7; border-radius: 8px; box-shadow: 0 8px 24px #0003; }
+.photo-context-menu button { width: 100%; border: 0; border-radius: 5px; font-size: 13px; padding: 8px 12px; text-align: left; white-space: nowrap; }
+.photo-context-menu button:hover { background: #f0f5f1; }
