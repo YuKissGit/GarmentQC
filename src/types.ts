@@ -22,7 +22,7 @@ export interface Carton {
 export interface ImportResult {
   imported: number;
   created: number;
-  updated: number;
+  skipped: number;
   products: number;
 }
 

@@ -222,7 +222,7 @@ function App() {
                 const result = await api.importCartons(batch.id, path);
                 await refreshBatch(batch);
                 setMessage(
-                  `已导入 ${result.imported} 个箱号、${result.products} 个 UPC：新建 ${result.created} 个，更新 ${result.updated} 个`,
+                  `已导入 ${result.imported} 个新箱号、${result.products} 个 UPC，跳过 ${result.skipped} 个已有箱号`,
                 );
               } catch (e) {
                 showError(e);
@@ -490,9 +490,7 @@ function CartonView({
   };
   const active = (["A", "B", "C", "D"] as Grade[]).flatMap((grade) =>
     drafts[grade]
-      .filter(
-        (r) => r.barcode.trim() || r.exceptionReason.trim() || r.photos.length,
-      )
+      .filter((r) => r.barcode.trim())
       .map((row) => ({ grade, row })),
   );
   const beginEdit = () => {
@@ -537,16 +535,24 @@ function CartonView({
       notify("请先输入商品条码");
       return;
     }
-    if (active.some((x) => !x.row.barcode.trim())) {
-      notify("每行都必须填写商品条码");
-      return;
-    }
     if (
       active.some(
         (x) => !Number.isInteger(x.row.quantity) || x.row.quantity < 1,
       )
     ) {
       notify("数量必须是正整数");
+      return;
+    }
+    if (active.some((x) => !x.row.exceptionReason.trim())) {
+      notify("每行都必须填写异常原因");
+      return;
+    }
+    if (
+      active.some(
+        (x) => x.grade !== "A" && !x.row.recordId && !x.row.photos.length,
+      )
+    ) {
+      notify("B/C/D 级每行都必须至少添加 1 张图片");
       return;
     }
     try {
@@ -987,7 +993,7 @@ function GradePanel({
               onChange={(e) =>
                 update(row.id, { exceptionReason: e.target.value })
               }
-              placeholder="选填"
+              placeholder="输入条码后必填"
             />
             {row.recordId ? (
               <div className="drop-zone saved-photo-note">原有图片将保留</div>
@@ -1063,7 +1069,9 @@ function GradePanel({
                           </button>
                         </span>
                       ))
-                    : "左键选择图片，右键粘贴图片"}
+                    : grade === "A"
+                      ? "选填：左键选择，右键粘贴"
+                      : "输入条码后必填：左键选择，右键粘贴"}
                 </span>
               </div>
             )}

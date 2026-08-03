@@ -35,7 +35,7 @@ pub struct Carton {
 pub struct ImportResult {
     pub imported: i64,
     pub created: i64,
-    pub updated: i64,
+    pub skipped: i64,
     pub products: i64,
 }
 

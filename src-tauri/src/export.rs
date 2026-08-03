@@ -1,5 +1,6 @@
 use crate::db::Database;
 use anyhow::{Context, Result};
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use umya_spreadsheet::structs::drawing::spreadsheet::{
@@ -21,6 +22,13 @@ pub fn export_batch(
     output_dir: PathBuf,
     resource_dir: PathBuf,
 ) -> Result<Vec<String>> {
+    if !db
+        .list_cartons(batch_id)?
+        .iter()
+        .any(|carton| carton.status == "completed")
+    {
+        anyhow::bail!("当前没有已完成的箱号可导出")
+    }
     fs::create_dir_all(&output_dir)?;
     let seal_template = find_template(&resource_dir, "template-2.xlsx")?;
     let report_template = find_template(&resource_dir, "template-1.xlsx")?;
@@ -87,9 +95,13 @@ mod tests {
             grade: "D".into(),
             quantity: 50,
             exception_reason: "Cannot repair".into(),
-            photos: Vec::new(),
+            photos: vec![PhotoInput {
+                name: "d-photo.png".into(),
+                data_base64: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=".into(),
+            }],
         })
         .unwrap();
+        db.complete_carton(carton_id).unwrap();
         db.create_record(RecordInput {
             batch_id,
             carton_id,
@@ -151,7 +163,7 @@ mod tests {
         for column in ["G", "H", "I"] {
             assert_eq!(*photos.get_column_dimension(column).unwrap().get_width(), 50.0);
         }
-        assert_eq!(photos.get_image_collection().len(), 2);
+        assert_eq!(photos.get_image_collection().len(), 52);
         let image = &photos.get_image_collection()[0];
         let anchor = image.get_two_cell_anchor().unwrap();
         assert_eq!(anchor.get_from_marker().get_coordinate(), "G2");
@@ -160,6 +172,51 @@ mod tests {
         assert!(*anchor.get_from_marker().get_row_off() > 0);
         assert!(*anchor.get_to_marker().get_col_off() < (PHOTO_CELL_WIDTH_PX * EMU_PER_PIXEL) as i32);
         assert!(*anchor.get_to_marker().get_row_off() < (PHOTO_CELL_HEIGHT_PX * EMU_PER_PIXEL) as i32);
+    }
+
+    #[test]
+    fn exports_only_completed_cartons_and_leaves_no_d_note_blank() {
+        let root = std::env::temp_dir().join(format!("clothes-qa-export-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let mut db = Database::open(root.join("test.db"), root.join("photos")).unwrap();
+        let batch_id = db
+            .create_batch(BatchInput {
+                batch_no: "COMPLETED-ONLY".into(),
+                inspection_date: "2026-08-02".into(),
+            })
+            .unwrap();
+        let completed_id = db.create_carton(batch_id, "001".into()).unwrap();
+        let incomplete_id = db.create_carton(batch_id, "002".into()).unwrap();
+        let photo = || PhotoInput {
+            name: "sample.png".into(),
+            data_base64: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=".into(),
+        };
+        for (carton_id, barcode) in [(completed_id, "DONE"), (incomplete_id, "NOT-DONE")] {
+            db.create_record(RecordInput {
+                batch_id,
+                carton_id,
+                barcode: barcode.into(),
+                grade: "A".into(),
+                quantity: 1,
+                exception_reason: "测试".into(),
+                photos: vec![photo()],
+            })
+            .unwrap();
+        }
+        db.complete_carton(completed_id).unwrap();
+        let resource_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .to_path_buf();
+        let files = export_batch(&db, batch_id, root.clone(), resource_dir).unwrap();
+        let seal = reader::xlsx::read(Path::new(&files[0])).unwrap();
+        assert!(seal.get_sheet_by_name("001").is_some());
+        assert!(seal.get_sheet_by_name("002").is_none());
+        assert_eq!(seal.get_sheet_by_name("001").unwrap().get_value("G4"), "");
+        let report = reader::xlsx::read(Path::new(&files[1])).unwrap();
+        let grade_a = report.get_sheet_by_name("A 良品").unwrap();
+        assert_eq!(grade_a.get_value("C2"), "DONE");
+        assert_ne!(grade_a.get_value("C3"), "NOT-DONE");
     }
 }
 
@@ -177,7 +234,11 @@ fn find_template(resource_dir: &Path, name: &str) -> Result<PathBuf> {
 
 fn export_seal(db: &Database, batch_id: i64, template: &Path, out: &Path) -> Result<()> {
     let mut book = reader::xlsx::read(template)?;
-    let cartons = db.list_cartons(batch_id)?;
+    let cartons: Vec<_> = db
+        .list_cartons(batch_id)?
+        .into_iter()
+        .filter(|carton| carton.status == "completed")
+        .collect();
     let sheet_count = book.get_sheet_count();
     if cartons.len() > sheet_count {
         let template_sheet = book
@@ -272,16 +333,18 @@ fn export_seal(db: &Database, batch_id: i64, template: &Path, out: &Path) -> Res
         sheet
             .get_cell_mut(format!("E{total_row}"))
             .set_value_number(emitted as f64);
-        sheet
-            .get_cell_mut(format!("G{total_row}"))
-            .set_value(format!(
-                "原箱共{}件，取出{}件D",
-                carton.reference_qty.unwrap_or(carton.inspected_qty),
-                carton.grade_d
-            ))
-            .get_style_mut()
-            .get_alignment_mut()
-            .set_wrap_text(true);
+        if carton.grade_d > 0 {
+            sheet
+                .get_cell_mut(format!("G{total_row}"))
+                .set_value(format!(
+                    "原箱共{}件，取出{}件D",
+                    carton.reference_qty.unwrap_or(carton.inspected_qty),
+                    carton.grade_d
+                ))
+                .get_style_mut()
+                .get_alignment_mut()
+                .set_wrap_text(true);
+        }
         sheet
             .get_row_dimension_mut(&(total_row as u32))
             .set_height(63.0)
@@ -300,7 +363,17 @@ fn export_seal(db: &Database, batch_id: i64, template: &Path, out: &Path) -> Res
 fn export_report(db: &Database, batch_id: i64, template: &Path, out: &Path) -> Result<()> {
     let mut book = reader::xlsx::read(template)?;
     let _ = book.remove_sheet_by_name("质检报告");
-    let records = db.list_records(batch_id, None)?;
+    let completed_carton_ids: HashSet<_> = db
+        .list_cartons(batch_id)?
+        .into_iter()
+        .filter(|carton| carton.status == "completed")
+        .map(|carton| carton.id)
+        .collect();
+    let records: Vec<_> = db
+        .list_records(batch_id, None)?
+        .into_iter()
+        .filter(|record| completed_carton_ids.contains(&record.carton_id))
+        .collect();
     for (name, grade) in [
         ("A 良品", "A"),
         ("B 可增值", "B"),

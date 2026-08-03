@@ -247,6 +247,7 @@ impl Database {
             &input.barcode,
             &input.grade,
             input.quantity,
+            &input.exception_reason,
             input.photos.len(),
         )?;
         let tx = self.conn.transaction()?;
@@ -270,14 +271,6 @@ impl Database {
     }
 
     pub fn replace_carton_records(&mut self, input: ReplaceCartonRecordsInput) -> Result<()> {
-        for record in &input.records {
-            validate_record(
-                &record.barcode,
-                &record.grade,
-                record.quantity,
-                record.photos.len(),
-            )?;
-        }
         let tx = self.conn.transaction()?;
         ensure_carton(&tx, input.batch_id, input.carton_id)?;
         let existing_ids = tx
@@ -291,6 +284,28 @@ impl Database {
             .collect::<HashSet<_>>();
         if !retained_ids.is_subset(&existing_ids) {
             bail!("Carton changes contain an invalid record")
+        }
+        for record in &input.records {
+            let photo_count = if record.photos.is_empty() {
+                if let Some(id) = record.id {
+                    tx.query_row(
+                        "SELECT COUNT(*) FROM photos WHERE record_id=?",
+                        [id],
+                        |row| row.get::<_, usize>(0),
+                    )?
+                } else {
+                    0
+                }
+            } else {
+                record.photos.len()
+            };
+            validate_record(
+                &record.barcode,
+                &record.grade,
+                record.quantity,
+                &record.exception_reason,
+                photo_count,
+            )?;
         }
 
         let mut files_to_remove = Vec::new();
@@ -374,7 +389,8 @@ impl Database {
         }
         let tx = self.conn.transaction()?;
         let mut created = 0;
-        let mut updated = 0;
+        let mut skipped = 0;
+        let mut imported_products = 0;
         let mut cartons = BTreeMap::<String, Vec<&CartonProductImport>>::new();
         for row in &rows {
             if row.carton_no.trim().is_empty()
@@ -396,20 +412,19 @@ impl Database {
                     |row| row.get::<_, i64>(0),
                 )
                 .optional()?;
-            let carton_id = if let Some(id) = existing {
-                updated += 1;
-                id
-            } else {
-                tx.execute(
-                    "INSERT INTO cartons(batch_id,carton_no) VALUES(?,?)",
-                    params![batch_id, carton_no],
-                )?;
-                created += 1;
-                tx.last_insert_rowid()
-            };
-            tx.execute("DELETE FROM carton_products WHERE carton_id=?", [carton_id])?;
+            if existing.is_some() {
+                skipped += 1;
+                continue;
+            }
+            tx.execute(
+                "INSERT INTO cartons(batch_id,carton_no) VALUES(?,?)",
+                params![batch_id, carton_no],
+            )?;
+            created += 1;
+            let carton_id = tx.last_insert_rowid();
             let mut reference_qty = 0;
             for (source_order, product) in products.iter().enumerate() {
+                imported_products += 1;
                 reference_qty += product.units_per_carton;
                 tx.execute(
                     "INSERT INTO carton_products(
@@ -438,10 +453,10 @@ impl Database {
         }
         tx.commit()?;
         Ok(ImportResult {
-            imported: cartons.len() as i64,
+            imported: created,
             created,
-            updated,
-            products: rows.len() as i64,
+            skipped,
+            products: imported_products,
         })
     }
 
@@ -487,7 +502,13 @@ fn ensure_carton(tx: &Transaction, batch_id: i64, carton_id: i64) -> Result<()> 
     Ok(())
 }
 
-fn validate_record(barcode: &str, grade: &str, quantity: i64, photo_count: usize) -> Result<()> {
+fn validate_record(
+    barcode: &str,
+    grade: &str,
+    quantity: i64,
+    exception_reason: &str,
+    photo_count: usize,
+) -> Result<()> {
     if barcode.trim().is_empty() {
         bail!("Product barcode is required")
     }
@@ -496,6 +517,12 @@ fn validate_record(barcode: &str, grade: &str, quantity: i64, photo_count: usize
     }
     if quantity < 1 {
         bail!("Quantity must be greater than 0")
+    }
+    if exception_reason.trim().is_empty() {
+        bail!("异常原因为必填项")
+    }
+    if grade != "A" && photo_count == 0 {
+        bail!("B/C/D 级每条记录至少需要 1 张图片")
     }
     if photo_count > 3 {
         bail!("Maximum 3 images per record")
@@ -587,8 +614,11 @@ mod tests {
             barcode: barcode.into(),
             grade: grade.into(),
             quantity,
-            exception_reason: String::new(),
-            photos: vec![],
+            exception_reason: "测试原因".into(),
+            photos: vec![PhotoInput {
+                name: "test.png".into(),
+                data_base64: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=".into(),
+            }],
         }
     }
 
@@ -621,6 +651,19 @@ mod tests {
     }
 
     #[test]
+    fn grade_a_allows_no_photo_but_other_grades_require_one() {
+        let mut db = setup();
+        let batch_id = batch(&mut db);
+        let carton_id = db.create_carton(batch_id, "352".into()).unwrap();
+        let mut grade_a = input(batch_id, carton_id, "A-001", "A", 1);
+        grade_a.photos.clear();
+        assert!(db.create_record(grade_a).is_ok());
+        let mut grade_b = input(batch_id, carton_id, "B-001", "B", 1);
+        grade_b.photos.clear();
+        assert!(db.create_record(grade_b).is_err());
+    }
+
+    #[test]
     fn imports_multiple_upcs_and_sums_reference_quantity() {
         let mut db = setup();
         let batch_id = batch(&mut db);
@@ -635,6 +678,27 @@ mod tests {
         let carton = db.list_cartons(batch_id).unwrap().remove(0);
         assert_eq!(carton.reference_qty, Some(25));
         assert_eq!(db.list_carton_products(carton.id).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn import_skips_existing_cartons_without_overwriting_products() {
+        let mut db = setup();
+        let batch_id = batch(&mut db);
+        db.import_cartons(batch_id, vec![imported("10", "OLD", 6)])
+            .unwrap();
+        let result = db
+            .import_cartons(
+                batch_id,
+                vec![imported("10", "NEW", 99), imported("11", "FRESH", 4)],
+            )
+            .unwrap();
+        assert_eq!((result.imported, result.skipped, result.products), (1, 1, 1));
+        let cartons = db.list_cartons(batch_id).unwrap();
+        let existing = cartons.iter().find(|carton| carton.carton_no == "10").unwrap();
+        let products = db.list_carton_products(existing.id).unwrap();
+        assert_eq!(products.len(), 1);
+        assert_eq!(products[0].upc, "OLD");
+        assert_eq!(existing.reference_qty, Some(6));
     }
 
     #[test]

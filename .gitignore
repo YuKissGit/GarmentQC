@@ -6,4 +6,4 @@ src-tauri/target/
 *.db-wal
 .DS_Store
 ~$*.xlsx
-
+release/
