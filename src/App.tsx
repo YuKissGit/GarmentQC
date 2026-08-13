@@ -414,6 +414,7 @@ function CartonView({
   });
   const [editingExisting, setEditingExisting] = useState(false);
   const [selectedUpc, setSelectedUpc] = useState<string | null>(null);
+  const [inspectorDraft, setInspectorDraft] = useState(carton.inspector);
   const stats = useMemo(
     () => [
       ["A", carton.gradeA],
@@ -424,6 +425,10 @@ function CartonView({
     [carton],
   );
   useEffect(() => setSelectedUpc(null), [carton.id]);
+  useEffect(() => setInspectorDraft(carton.inspector), [
+    carton.id,
+    carton.inspector,
+  ]);
   const selectedProduct =
     products.find((product) => product.upc === selectedUpc) ?? null;
   const visibleRecords = selectedUpc
@@ -526,6 +531,13 @@ function CartonView({
     });
     setEditingExisting(false);
   };
+  const saveInspector = async () => {
+    const value = inspectorDraft.trim();
+    if (value === carton.inspector) return;
+    await api.updateCartonInspector(carton.id, value);
+    await refresh();
+    notify("质检人员已保存");
+  };
   const saveAll = async () => {
     if (carton.status === "completed") {
       notify("该箱已完成，请先点击“重新打开”再修改");
@@ -609,6 +621,29 @@ function CartonView({
             {carton.inspectedQty} · 装箱数量 {carton.sealedQty}
           </p>
         </div>
+        <label className="inspector-field">
+          质检人员
+          <span>
+            <input
+              value={inspectorDraft}
+              onChange={(event) => setInspectorDraft(event.target.value)}
+              onBlur={() => saveInspector().catch((e) => notify(String(e)))}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.currentTarget.blur();
+                }
+              }}
+              placeholder="输入质检人员"
+            />
+            <button
+              disabled={inspectorDraft.trim() === carton.inspector}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => saveInspector().catch((e) => notify(String(e)))}
+            >
+              保存人员
+            </button>
+          </span>
+        </label>
         <div className="upc-list">
           {products.map((product) => (
             <button
@@ -724,6 +759,11 @@ function CartonView({
                 <button
                   disabled={!records.length || editingExisting}
                   onClick={async () => {
+                    const inspector = inspectorDraft.trim();
+                    if (!inspector) {
+                      notify("请先填写质检人员");
+                      return;
+                    }
                     const reference =
                       carton.referenceQty === null
                         ? "无"
@@ -738,11 +778,12 @@ function CartonView({
                             : `少 ${Math.abs(difference)}`;
                     if (
                       !confirm(
-                        `实际质检：${carton.inspectedQty}\n参考数量：${reference}\n差异：${diff}\nA/B/C/D：${carton.gradeA}/${carton.gradeB}/${carton.gradeC}/${carton.gradeD}\n装箱数量：${carton.sealedQty}\n\n确认完成本箱？`,
+                        `质检人员：${inspector}\n实际质检：${carton.inspectedQty}\n参考数量：${reference}\n差异：${diff}\nA/B/C/D：${carton.gradeA}/${carton.gradeB}/${carton.gradeC}/${carton.gradeD}\n装箱数量：${carton.sealedQty}\n\n确认完成本箱？`,
                       )
                     )
                       return;
                     try {
+                      await saveInspector();
                       await api.completeCarton(carton.id);
                       await refresh();
                       notify("本箱已完成");
@@ -1327,6 +1368,19 @@ function ReportDialog({
     D: cartons.reduce((n, c) => n + c.gradeD, 0),
   };
   const total = totals.A + totals.B + totals.C + totals.D;
+  const inspectorTotals = cartons
+    .filter((carton) => carton.status === "completed")
+    .reduce(
+      (groups, carton) => {
+        const name = carton.inspector.trim() || "未填写";
+        groups[name] = (groups[name] ?? 0) + carton.inspectedQty;
+        return groups;
+      },
+      {} as Record<string, number>,
+    );
+  const inspectorRows = Object.entries(inspectorTotals).sort((a, b) =>
+    b[1] === a[1] ? a[0].localeCompare(b[0], "zh-Hans-CN") : b[1] - a[1],
+  );
   return (
     <div className="modal report-modal">
       <div className="dialog report-dialog">
@@ -1355,6 +1409,28 @@ function ReportDialog({
             </div>
           ))}
         </div>
+        <h3>质检人员完成数量</h3>
+        <div className="report-table inspector-report-table">
+          <table>
+            <thead>
+              <tr>
+                <th>质检人员</th>
+                <th>完成产品数量</th>
+              </tr>
+            </thead>
+            <tbody>
+              {inspectorRows.map(([name, quantity]) => (
+                <tr key={name}>
+                  <td>{name}</td>
+                  <td>{quantity}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {!inspectorRows.length && (
+            <p className="table-empty">暂无已完成箱号</p>
+          )}
+        </div>
         <h3>箱号出入</h3>
         <div className="report-table">
           <table>
@@ -1363,6 +1439,7 @@ function ReportDialog({
                 <th>箱号</th>
                 <th>参考数量</th>
                 <th>实际数量</th>
+                <th>质检人员</th>
                 <th>差异</th>
                 <th>状态</th>
               </tr>
@@ -1397,6 +1474,7 @@ function ReportDialog({
                     <td>{c.cartonNo}</td>
                     <td>{c.referenceQty ?? "—"}</td>
                     <td>{c.inspectedQty}</td>
+                    <td>{c.inspector || "—"}</td>
                     <td>
                       {diff === null ? "—" : diff > 0 ? `+${diff}` : diff}
                     </td>

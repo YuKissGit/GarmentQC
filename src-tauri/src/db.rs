@@ -27,6 +27,7 @@ impl Database {
                id INTEGER PRIMARY KEY,
                batch_id INTEGER NOT NULL REFERENCES batches(id) ON DELETE CASCADE,
                carton_no TEXT NOT NULL,
+               inspector TEXT NOT NULL DEFAULT '',
                reference_qty INTEGER CHECK(reference_qty>0),
                status TEXT NOT NULL DEFAULT 'inspecting',
                UNIQUE(batch_id,carton_no)
@@ -64,6 +65,12 @@ impl Database {
              );
              CREATE INDEX IF NOT EXISTS idx_records_batch ON inspection_records(batch_id);
              CREATE INDEX IF NOT EXISTS idx_records_carton ON inspection_records(carton_id);",
+        )?;
+        add_column_if_missing(
+            &conn,
+            "cartons",
+            "inspector",
+            "TEXT NOT NULL DEFAULT ''",
         )?;
         Ok(Self { conn, photo_dir })
     }
@@ -130,6 +137,17 @@ impl Database {
         Ok(())
     }
 
+    pub fn update_carton_inspector(&mut self, id: i64, inspector: String) -> Result<()> {
+        let changed = self.conn.execute(
+            "UPDATE cartons SET inspector=? WHERE id=?",
+            params![inspector.trim(), id],
+        )?;
+        if changed == 0 {
+            bail!("未找到该箱")
+        }
+        Ok(())
+    }
+
     pub fn delete_carton(&mut self, id: i64) -> Result<()> {
         let mut statement = self.conn.prepare(
             "SELECT p.file_path FROM photos p
@@ -150,7 +168,7 @@ impl Database {
 
     pub fn list_cartons(&self, batch_id: i64) -> Result<Vec<Carton>> {
         let mut statement = self.conn.prepare(
-            "SELECT c.id,c.carton_no,c.reference_qty,
+            "SELECT c.id,c.carton_no,c.inspector,c.reference_qty,
                     COALESCE(SUM(r.quantity),0),
                     COALESCE(SUM(CASE WHEN r.grade='A' THEN r.quantity ELSE 0 END),0),
                     COALESCE(SUM(CASE WHEN r.grade='B' THEN r.quantity ELSE 0 END),0),
@@ -165,19 +183,20 @@ impl Database {
         )?;
         let rows = statement
             .query_map([batch_id], |row| {
-                let inspected: i64 = row.get(3)?;
-                let grade_d: i64 = row.get(7)?;
+                let inspected: i64 = row.get(4)?;
+                let grade_d: i64 = row.get(8)?;
                 Ok(Carton {
                     id: row.get(0)?,
                     carton_no: row.get(1)?,
-                    reference_qty: row.get(2)?,
+                    inspector: row.get(2)?,
+                    reference_qty: row.get(3)?,
                     inspected_qty: inspected,
-                    grade_a: row.get(4)?,
-                    grade_b: row.get(5)?,
-                    grade_c: row.get(6)?,
+                    grade_a: row.get(5)?,
+                    grade_b: row.get(6)?,
+                    grade_c: row.get(7)?,
                     grade_d,
                     sealed_qty: inspected - grade_d,
-                    status: row.get(8)?,
+                    status: row.get(9)?,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -502,6 +521,27 @@ fn ensure_carton(tx: &Transaction, batch_id: i64, carton_id: i64) -> Result<()> 
     Ok(())
 }
 
+fn add_column_if_missing(
+    conn: &Connection,
+    table: &str,
+    column: &str,
+    definition: &str,
+) -> Result<()> {
+    let mut statement = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+    let exists = statement
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<rusqlite::Result<Vec<_>>>()?
+        .into_iter()
+        .any(|name| name == column);
+    if !exists {
+        conn.execute(
+            &format!("ALTER TABLE {table} ADD COLUMN {column} {definition}"),
+            [],
+        )?;
+    }
+    Ok(())
+}
+
 fn validate_record(
     barcode: &str,
     grade: &str,
@@ -648,6 +688,17 @@ mod tests {
             .unwrap();
         let carton = db.list_cartons(batch_id).unwrap().remove(0);
         assert_eq!((carton.grade_b, carton.grade_d, carton.sealed_qty), (3, 1, 3));
+    }
+
+    #[test]
+    fn updates_carton_inspector() {
+        let mut db = setup();
+        let batch_id = batch(&mut db);
+        let carton_id = db.create_carton(batch_id, "350".into()).unwrap();
+        db.update_carton_inspector(carton_id, "  张三  ".into())
+            .unwrap();
+        let carton = db.list_cartons(batch_id).unwrap().remove(0);
+        assert_eq!(carton.inspector, "张三");
     }
 
     #[test]

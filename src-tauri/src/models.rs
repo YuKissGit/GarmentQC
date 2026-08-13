@@ -20,6 +20,7 @@ pub struct BatchInput {
 pub struct Carton {
     pub id: i64,
     pub carton_no: String,
+    pub inspector: String,
     pub reference_qty: Option<i64>,
     pub inspected_qty: i64,
     pub grade_a: i64,

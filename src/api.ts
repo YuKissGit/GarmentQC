@@ -23,6 +23,8 @@ export const api = {
     invoke<number>("create_carton", { batchId, cartonNo }),
   renameCarton: (id: number, cartonNo: string) =>
     invoke<void>("rename_carton", { id, cartonNo }),
+  updateCartonInspector: (id: number, inspector: string) =>
+    invoke<void>("update_carton_inspector", { id, inspector }),
   deleteCarton: (id: number) => invoke<void>("delete_carton", { id }),
   importCartons: (batchId: number, path: string) =>
     invoke<ImportResult>("import_cartons", { batchId, path }),

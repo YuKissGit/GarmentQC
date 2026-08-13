@@ -48,6 +48,14 @@ fn rename_carton(db: State<AppDb>, id: i64, carton_no: String) -> Result<(), Str
     result(db.lock().unwrap().rename_carton(id, carton_no))
 }
 #[tauri::command]
+fn update_carton_inspector(
+    db: State<AppDb>,
+    id: i64,
+    inspector: String,
+) -> Result<(), String> {
+    result(db.lock().unwrap().update_carton_inspector(id, inspector))
+}
+#[tauri::command]
 fn delete_carton(db: State<AppDb>, id: i64) -> Result<(), String> {
     result(db.lock().unwrap().delete_carton(id))
 }
@@ -356,6 +364,7 @@ pub fn run() {
             list_carton_products,
             create_carton,
             rename_carton,
+            update_carton_inspector,
             delete_carton,
             list_records,
             create_record,

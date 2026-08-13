@@ -9,6 +9,7 @@ export interface Batch {
 export interface Carton {
   id: number;
   cartonNo: string;
+  inspector: string;
   referenceQty: number | null;
   inspectedQty: number;
   gradeA: number;
